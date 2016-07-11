@@ -16,7 +16,13 @@ before_install:
   - export CHROME_BIN=/usr/bin/google-chrome
   - export DISPLAY=:99.0
   - sh -e /etc/init.d/xvfb start
+  - sudo apt-get install python2.7 git-all pkg-config libncurses5-dev libssl-dev libnss3-dev libexpat-dev
+  - npm config set python python2
+  - sudo apt-get install libstdc++6
+  - sudo add-apt-repository ppa:ubuntu-toolchain-r/test
   - sudo apt-get update -qq
+  - sudo apt-get upgrade
+  - sudo apt-get dist-upgrade
   - npm update -g
   - npm install -g codeclimate-test-reporter
 script:
