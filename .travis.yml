@@ -21,8 +21,6 @@ before_install:
   - sudo apt-get install python2.7 git-all pkg-config libncurses5-dev libssl-dev libnss3-dev libexpat-dev -y
   - npm config set python python2
   - sudo apt-get update -qq
-  # - sudo apt-get upgrade -y
-  # - sudo apt-get dist-upgrade -y
   - npm update -g
   - npm install -g codeclimate-test-reporter
 script:
