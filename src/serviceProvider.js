@@ -1,4 +1,5 @@
 import FullyConnectedService from 'service/webChannelManager/FullyConnectedService'
+import SprayService from './service/webChannelManager/SprayService'
 import WebRTCService from 'service/channelBuilder/WebRTCService'
 import WebSocketService from 'service/channelBuilder/WebSocketService'
 import ChannelBuilderService from 'service/channelBuilder/ChannelBuilderService'
@@ -31,6 +32,12 @@ const CHANNEL_BUILDER = 'ChannelBuilderService'
 const FULLY_CONNECTED = 'FullyConnectedService'
 
 /**
+ * Constant used to get an instance of {@link SprayService}.
+ * @type {string}
+ */
+const SPRAY = 'SprayService'
+
+/**
  * Constant used to get an instance of {@link MessageBuilderService}. It is a
  * singleton service.
  * @type {string}
@@ -49,7 +56,8 @@ const services = new Map()
  * @param  {(module:serviceProvider.MESSAGE_BUILDER|
  *          module:serviceProvider.WEBRTC|
             module:serviceProvider.WEBSOCKET|
- *          module:serviceProvider.FULLY_CONNECTED)} name - The service name.
+ *          module:serviceProvider.FULLY_CONNECTED|
+ *          module:serviceProvide.SPRAY)} name - The service name.
  * @param  {Object} [options] - Any options that the service accepts.
  * @return {module:service~ServiceInterface} - Service instance.
  * @throws An error if the service name is unknown
@@ -70,6 +78,10 @@ let provide = function (name, options = {}) {
       service = new FullyConnectedService()
       services.set(name, service)
       return service
+    case SPRAY:
+      service = new SprayService()
+      services.set(name, service)
+      return service
     case MESSAGE_BUILDER:
       service = new MessageBuilderService()
       services.set(name, service)
@@ -79,4 +91,4 @@ let provide = function (name, options = {}) {
   }
 }
 
-export {WEBRTC, WEBSOCKET, CHANNEL_BUILDER, FULLY_CONNECTED, MESSAGE_BUILDER, provide}
+export {WEBRTC, WEBSOCKET, CHANNEL_BUILDER, FULLY_CONNECTED, SPRAY, MESSAGE_BUILDER, provide}
