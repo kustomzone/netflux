@@ -1,4 +1,4 @@
-import {provide, FULLY_CONNECTED, WEBRTC, WEBSOCKET, MESSAGE_BUILDER} from 'serviceProvider'
+import {provide, FULLY_CONNECTED, SPRAY, WEBRTC, WEBSOCKET, MESSAGE_BUILDER} from 'serviceProvider'
 import Channel from 'Channel'
 import JoiningPeer from 'JoiningPeer'
 import WebChannelGate from 'WebChannelGate'
@@ -92,6 +92,15 @@ const PING = 11
 const PONG = 12
 
 /**
+ * One of the internal message type. This message is sent when shuffling the known
+ * peers in Spray algorithm
+ * @type {number}
+ */
+const SHUFFLE = 13
+
+const SHUFFLE_ANSWER = 14
+
+/**
  * Constant used to send a message to the server in order that
  * he can join the webcahnnel
  * @type {string}
@@ -144,6 +153,7 @@ class WebChannel {
      * @type {external:Set}
      */
     this.channels = new Set()
+    this.channels.knownPeers = []
 
     /**
      * This event handler is used to resolve *Promise* in {@link WebChannel#join}.
@@ -252,6 +262,7 @@ class WebChannel {
     */
   addChannel (channel) {
     let jp = this.addJoiningPeer(channel.peerId, this.myId, channel)
+    // (this.topology() === FULLY_CONNECTED) ? this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
     this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
     channel.send(msgBld.msg(JOIN_INIT, {
         manager: this.settings.topology,
@@ -404,6 +415,20 @@ class WebChannel {
     }
   }
 
+  sendToPeerForShuffle (id, data) {
+    if (this.channels.size !== 0) {
+      let mes = msgBld.msg(SHUFFLE, data, id)
+      this.manager.sendTo(id, this, mes)
+    }
+  }
+
+  sendToPeerForShuffleAnswer (id, sample) {
+    if (this.channels.size !== 0) {
+      let mes = msgBld.msg(SHUFFLE_ANSWER, sample, id)
+      this.manager.sendTo(id, this, mes)
+    }
+  }
+
   /**
    * Get the ping of the *WebChannel*. It is an amount in milliseconds which
    * corresponds to the longest ping to each *WebChannel* member.
@@ -521,7 +546,11 @@ class WebChannel {
           break
         case JOIN_FINILIZE:
           this.joinSuccess(this.myId)
-          this.manager.broadcast(this, msgBld.msg(JOIN_SUCCESS))
+          if (this.topology === FULLY_CONNECTED) {
+            this.manager.broadcast(this, msgBld.msg(JOIN_SUCCESS))
+          } else if (this.topology === SPRAY) {
+            this.channels.knownPeers.forEach((kp) => { if (kp != 'undefined') { this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS)) } })
+          }
           this.onJoin()
           break
         case JOIN_SUCCESS:
@@ -544,6 +573,14 @@ class WebChannel {
             this.pingFinish(this.maxTime)
             this.pingTime = 0
           }
+          break
+        case SHUFFLE:
+          this.manager.onExchange(this, msg.origin, msg.sample)
+          console.log('myId', this.myId, 'shuffle', msg)
+          break
+        case SHUFFLE_ANSWER:
+          console.log('myId', this.myId, 'shuffle_anwser', msg)
+          // this.manager.onShuffleEnd(this, msg)
           break
         default:
           throw new Error(`Unknown message type code: "${header.code}"`)
@@ -626,9 +663,11 @@ class WebChannel {
     let jp = this.getJoiningPeer(id)
     jp.channelsToAdd.forEach((c) => {
       this.channels.add(c)
+      this.channels.knownPeers[this.channels.knownPeers.length] = {peerId: c.peerId, peerAge: 0}
     })
     // TODO: handle channels which should be closed & removed
     this.joiningPeers.delete(jp)
+    // console.log('myId :', this.myId, this.channels.knownPeers)
   }
 
   /**
@@ -721,6 +760,7 @@ class WebChannel {
     }
     return false
   }
+
   /**
    * Generate random id for a *WebChannel* or a new peer.
    * @private
@@ -738,6 +778,28 @@ class WebChannel {
       break
     } while (true)
     return id
+  }
+
+  /**
+   * Generate a random sample of size E[N/2]-1 from the know peers
+   */
+  getSample (partialView, size) {
+    let indexes = []
+    let sample = []
+    let index
+
+    while (indexes.length < size) {
+      index = Math.ceil(Math.random() * partialView.length) -1
+      if (!indexes.includes(index)) {
+        indexes[indexes.length] = index
+      }
+    }
+
+    for (let i = 0 ; i < size ; i++) {
+      sample[i] = partialView[indexes[i]]
+    }
+
+    return sample
   }
 }
 

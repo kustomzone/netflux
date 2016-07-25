@@ -1434,6 +1434,171 @@ class FullyConnectedService extends WebChannelManagerInterface {
 }
 
 /**
+ * Spray web channel manager. Implements spray topology
+ * network, when each peer is connected to ln(N) other peers.
+ *
+ * @extends module:webChannelManager~WebChannelManagerInterface
+ */
+class SprayService extends WebChannelManagerInterface {
+
+	constructor() {
+		super()
+	}
+
+	add(channel) {
+		let wc = channel.webChannel
+	    let peerIds = new Set([wc.myId])
+	    let jpIds = new Set()
+	    wc.channels.forEach((c) => peerIds.add(c.peerId))
+	    wc.getJoiningPeers().forEach((jp) => {
+		    if (channel.peerId !== jp.id && !peerIds.has(jp.id)) {
+		        jpIds.add(jp.id)
+		    }
+	    })
+	    return this.connectWith(wc, channel.peerId, channel.peerId, [...peerIds], [...jpIds])
+	}
+
+	broadcast(webChannel, data) {
+		let d
+	    for (let c of webChannel.channels) {
+	      d = (typeof window === 'undefined') ? data.slice(0) : data
+	      c.send(d)
+	    }
+	}
+
+	sendTo(id, webChannel, data) {
+		for (let kp of webChannel.channels.knownPeers) {
+			if (kp != 'undefined') {
+				if (kp.peerId === id) {
+					webChannel.channels.forEach((c) => {
+						if (c.peerId === id) {
+							c.send(data)
+						}
+					})
+				return
+				}
+			}
+		}
+	}
+
+	shuffle(webChannel) {
+		// let partialView
+		let oldest = webChannel.channels.knownPeers[0]
+		let sample
+
+		//increment age
+		webChannel.channels.knownPeers.forEach((kp) => { if (kp != 'undefined') { kp.peerAge = kp.peerAge + 1 } })
+
+		//getoldest
+		webChannel.channels.knownPeers.forEach((kp) => {
+			if (kp != 'undefined') {
+				if (kp.peerAge > oldest.peerAge) { oldest = kp }
+			}
+		})
+
+		// if oldest is unreachable handle it and repeat process
+
+		// select half of the neighbors excluding one occurrence of oldest
+		// partialView = webChannel.channels.knownPeers
+		// partialView[partialView.indexOf(oldest)] = {peerId: webChannel.myId, peerAge: 0}
+		sample = webChannel.getSample(webChannel.channels.knownPeers, Math.ceil(webChannel.channels.knownPeers.length / 2) -1)
+
+		// replace oldest occurrences with itself occurrences and send it to oldest
+		sample.forEach((kp) => {
+			if (kp.peerId === oldest.peerId) {
+				kp.peerId = webChannel.myId
+			}
+		})
+
+		// add one occurrence of itself to this sample
+		sample.push({peerId: webChannel.myId, peerAge: 0})
+
+		console.log('myId :', webChannel.myId)
+		console.log('knownPeers: ', webChannel.channels.knownPeers)
+		console.log('oldest: ', oldest)
+		console.log('sample :', sample)
+
+		webChannel.sendToPeerForShuffle(oldest.peerId, {origin: webChannel.myId, sample})
+		// this.sendTo(oldest.peerId, webChannel, JSON.stringify(sample))
+
+		// get response of oldest
+
+		sample.forEach((kp) => {
+			if (kp.peerId === webChannel.myId) {
+				kp.peerId = oldest.peerId
+			}
+		})
+
+		// delete the sample sent to oldest
+		let isDeleted
+		for (let i = 0 ; i < sample.length ; i++) {
+			isDeleted = false
+			for (let j = 0 ; j < webChannel.channels.knownPeers.length ; j++) {
+				if (webChannel.channels.knownPeers[j] != 'undefined') {
+					if (!isDeleted && webChannel.channels.knownPeers[j].peerId === sample[i].peerId 
+					  && webChannel.channels.knownPeers[j].peerAge === sample[i].peerAge) {
+						delete webChannel.channels.knownPeers[j]
+						isDeleted = true
+					}
+				}
+			}
+		}
+
+		webChannel.channels.knownPeers.sort()
+		webChannel.channels.knownPeers.length = webChannel.channels.knownPeers.length - sample.length
+
+		console.log('new knownPeers: ', webChannel.channels.knownPeers)
+		// remove an occurrence of oldest
+	}
+
+	onExchange(webChannel, originId, sample) {
+		let responseSample = webChannel.getSample(webChannel.channels.knownPeers, Math.ceil(webChannel.channels.knownPeers.length / 2))
+
+		console.log('myId', webChannel.myId, 'knownPeers: ', webChannel.channels.knownPeers)
+
+		// replace origin occurrences with itself occurrences and send it to origin
+		responseSample.forEach((kp) => {
+			if (kp.peerId === originId) {
+				kp.peerId = webChannel.myId
+			}
+		})
+
+		console.log('myId', webChannel.myId, 'answer :', responseSample)
+
+		webChannel.sendToPeerForShuffleAnswer(originId, responseSample)
+
+		responseSample.forEach((kp) => {
+			if (kp.peerId === webChannel.myId) {
+				kp.peerId = originId
+			}
+		})
+
+		let isDeleted
+		for (let i = 0 ; i < responseSample.length ; i++) {
+			isDeleted = false
+			for (let j = 0 ; j < webChannel.channels.knownPeers.length ; j++) {
+				if (webChannel.channels.knownPeers[j] != 'undefined') {
+					if (!isDeleted && webChannel.channels.knownPeers[j].peerId === responseSample[i].peerId 
+					  && webChannel.channels.knownPeers[j].peerAge === responseSample[i].peerAge) {
+						delete webChannel.channels.knownPeers[j]
+						isDeleted = true
+					}
+				}
+			}
+		}
+
+		webChannel.channels.knownPeers.sort()
+		webChannel.channels.knownPeers.length = webChannel.channels.knownPeers.length - sample.length
+		
+		webChannel.channels.knownPeers.concat(sample)
+
+		console.log('myId', webChannel.myId, 'new knownPeers apres concat: ', webChannel.channels.knownPeers)
+	}
+
+	leave(webChannel) {}
+}
+
+/**
  * Channel Builder module is responsible to create a connection between two
  * peers.
  * @module channelBuilder
@@ -2514,6 +2679,12 @@ const CHANNEL_BUILDER = 'ChannelBuilderService'
 const FULLY_CONNECTED = 'FullyConnectedService'
 
 /**
+ * Constant used to get an instance of {@link SprayService}.
+ * @type {string}
+ */
+const SPRAY = 'SprayService'
+
+/**
  * Constant used to get an instance of {@link MessageBuilderService}. It is a
  * singleton service.
  * @type {string}
@@ -2532,7 +2703,8 @@ const services = new Map()
  * @param  {(module:serviceProvider.MESSAGE_BUILDER|
  *          module:serviceProvider.WEBRTC|
             module:serviceProvider.WEBSOCKET|
- *          module:serviceProvider.FULLY_CONNECTED)} name - The service name.
+ *          module:serviceProvider.FULLY_CONNECTED|
+ *          module:serviceProvide.SPRAY)} name - The service name.
  * @param  {Object} [options] - Any options that the service accepts.
  * @return {module:service~ServiceInterface} - Service instance.
  * @throws An error if the service name is unknown
@@ -2551,6 +2723,10 @@ let provide = function (name, options = {}) {
       return new ChannelBuilderService(options)
     case FULLY_CONNECTED:
       service = new FullyConnectedService()
+      services.set(name, service)
+      return service
+    case SPRAY:
+      service = new SprayService()
       services.set(name, service)
       return service
     case MESSAGE_BUILDER:
@@ -2925,6 +3101,15 @@ const PING = 11
 const PONG = 12
 
 /**
+ * One of the internal message type. This message is sent when shuffling the known
+ * peers in Spray algorithm
+ * @type {number}
+ */
+const SHUFFLE = 13
+
+const SHUFFLE_ANSWER = 14
+
+/**
  * Constant used to send a message to the server in order that
  * he can join the webcahnnel
  * @type {string}
@@ -2977,6 +3162,7 @@ class WebChannel {
      * @type {external:Set}
      */
     this.channels = new Set()
+    this.channels.knownPeers = []
 
     /**
      * This event handler is used to resolve *Promise* in {@link WebChannel#join}.
@@ -3085,6 +3271,7 @@ class WebChannel {
     */
   addChannel (channel) {
     let jp = this.addJoiningPeer(channel.peerId, this.myId, channel)
+    // (this.topology() === FULLY_CONNECTED) ? this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
     this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
     channel.send(msgBld.msg(JOIN_INIT, {
         manager: this.settings.topology,
@@ -3237,6 +3424,20 @@ class WebChannel {
     }
   }
 
+  sendToPeerForShuffle (id, data) {
+    if (this.channels.size !== 0) {
+      let mes = msgBld.msg(SHUFFLE, data, id)
+      this.manager.sendTo(id, this, mes)
+    }
+  }
+
+  sendToPeerForShuffleAnswer (id, sample) {
+    if (this.channels.size !== 0) {
+      let mes = msgBld.msg(SHUFFLE_ANSWER, sample, id)
+      this.manager.sendTo(id, this, mes)
+    }
+  }
+
   /**
    * Get the ping of the *WebChannel*. It is an amount in milliseconds which
    * corresponds to the longest ping to each *WebChannel* member.
@@ -3354,7 +3555,11 @@ class WebChannel {
           break
         case JOIN_FINILIZE:
           this.joinSuccess(this.myId)
-          this.manager.broadcast(this, msgBld.msg(JOIN_SUCCESS))
+          if (this.topology === FULLY_CONNECTED) {
+            this.manager.broadcast(this, msgBld.msg(JOIN_SUCCESS))
+          } else if (this.topology === SPRAY) {
+            this.channels.knownPeers.forEach((kp) => { if (kp != 'undefined') { this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS)) } })
+          }
           this.onJoin()
           break
         case JOIN_SUCCESS:
@@ -3377,6 +3582,14 @@ class WebChannel {
             this.pingFinish(this.maxTime)
             this.pingTime = 0
           }
+          break
+        case SHUFFLE:
+          this.manager.onExchange(this, msg.origin, msg.sample)
+          console.log('myId', this.myId, 'shuffle', msg)
+          break
+        case SHUFFLE_ANSWER:
+          console.log('myId', this.myId, 'shuffle_anwser', msg)
+          // this.manager.onShuffleEnd(this, msg)
           break
         default:
           throw new Error(`Unknown message type code: "${header.code}"`)
@@ -3459,9 +3672,11 @@ class WebChannel {
     let jp = this.getJoiningPeer(id)
     jp.channelsToAdd.forEach((c) => {
       this.channels.add(c)
+      this.channels.knownPeers[this.channels.knownPeers.length] = {peerId: c.peerId, peerAge: 0}
     })
     // TODO: handle channels which should be closed & removed
     this.joiningPeers.delete(jp)
+    // console.log('myId :', this.myId, this.channels.knownPeers)
   }
 
   /**
@@ -3554,6 +3769,7 @@ class WebChannel {
     }
     return false
   }
+
   /**
    * Generate random id for a *WebChannel* or a new peer.
    * @private
@@ -3571,6 +3787,28 @@ class WebChannel {
       break
     } while (true)
     return id
+  }
+
+  /**
+   * Generate a random sample of size E[N/2]-1 from the know peers
+   */
+  getSample (partialView, size) {
+    let indexes = []
+    let sample = []
+    let index
+
+    while (indexes.length < size) {
+      index = Math.ceil(Math.random() * partialView.length) -1
+      if (!indexes.includes(index)) {
+        indexes[indexes.length] = index
+      }
+    }
+
+    for (let i = 0 ; i < size ; i++) {
+      sample[i] = partialView[indexes[i]]
+    }
+
+    return sample
   }
 }
 

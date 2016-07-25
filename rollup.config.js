@@ -20,6 +20,7 @@ if (process.argv.length > 2 && process.argv[2].match('-(t|-test)')) {
       })
     ]
   }).then((bundle) => bundle.write({format: 'cjs', dest}))
+    .catch((e) => console.error(e))
 } else {
   // Build distributions
   let filesize = require('rollup-plugin-filesize')

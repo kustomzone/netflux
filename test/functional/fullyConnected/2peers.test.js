@@ -1,10 +1,12 @@
 import {signaling} from 'config'
 import {WebChannel} from 'src/WebChannel'
+import {FULLY_CONNECTED, SPRAY} from 'serviceProvider'
 
 describe('2 peers -> ', () => {
   it('Should have equal WebChannel structure', (done) => {
     let wc1 = new WebChannel({signaling})
     let wc2 = new WebChannel({signaling})
+    console.log(wc1.settings)
     wc1.onJoining = (id) => {
       expect(wc1.id).toBe(wc2.id)
       expect(wc1.channels.size).toBe(wc2.channels.size)
@@ -14,8 +16,10 @@ describe('2 peers -> ', () => {
       wc2.leave()
       done()
     }
+    console.log('p1')
     wc1.open()
       .then((data) => {
+        console.log('p2')
         wc2.join(data.key)
           .catch(done.fail)
       })

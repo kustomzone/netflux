@@ -2,8 +2,8 @@
 let Jasmine = require('jasmine')
 let SpecReporter = require('jasmine-spec-reporter')
 let config = {
-  spec_dir: 'tmp/test/service',
-  spec_files: ['**/*test.js'],
+  spec_dir: 'tmp/test/functional/fullyConnected',
+  spec_files: ['**/3peers.test.js'],
   stopSpecOnExpectationFailure: false,
   random: false
 }
