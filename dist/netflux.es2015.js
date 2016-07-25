@@ -3596,10 +3596,6 @@ class Bot {
       // this.log('id', wc.myId)
     }
 
-    this.onLaunch = () => {
-      // this.log('WebSocketServer', 'Server runs on: ws://' + this.settings.host + ':' + this.settings.port)
-    }
-
     this.onConnection = () => {
       // this.log('connected', 'Connection of one client')
     }
@@ -3622,7 +3618,6 @@ class Bot {
       this.settings = Object.assign({}, this.settings, options)
       let WebSocketServer = require('ws').Server
       this.server = new WebSocketServer({host: this.settings.host, port: this.settings.port}, () => {
-        this.onLaunch()
         resolve()
       })
 
