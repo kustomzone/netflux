@@ -1446,6 +1446,7 @@ class SprayService extends WebChannelManagerInterface {
 	}
 
 	add(channel) {
+		// actual : add from fully_connected...
 		let wc = channel.webChannel
 	    let peerIds = new Set([wc.myId])
 	    let jpIds = new Set()
@@ -1459,6 +1460,7 @@ class SprayService extends WebChannelManagerInterface {
 	}
 
 	broadcast(webChannel, data) {
+		// actual : broadcast from fully_connected...
 		let d
 	    for (let c of webChannel.channels) {
 	      d = (typeof window === 'undefined') ? data.slice(0) : data
@@ -1467,30 +1469,58 @@ class SprayService extends WebChannelManagerInterface {
 	}
 
 	sendTo(id, webChannel, data) {
-		for (let kp of webChannel.channels.knownPeers) {
+		let directChannelExists = false
+		let isKnownPeer = false
+		let channelExists = false
+		let randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
+		for (let kp of webChannel.knownPeers) {
 			if (kp != 'undefined') {
 				if (kp.peerId === id) {
-					webChannel.channels.forEach((c) => {
-						if (c.peerId === id) {
-							c.send(data)
-						}
-					})
-				return
+					isKnownPeer = true
 				}
 			}
+		}
+
+		if (!isKnownPeer) {
+			webChannel.channels.forEach((c) => {
+				if (c.peerId === id) {
+					channelExists = true
+					return
+				}
+			})
+			if (channelExists) {
+				directChannelExists = true
+			}
+		} else {
+			directChannelExists = true
+		}
+
+		if (directChannelExists) {
+			webChannel.channels.forEach((c) => {
+				if (c.peerId === id) {
+					c.send(data)
+					return
+				}
+			})
+		} else {
+			webChannel.forwardMsg(id, data, webChannel.knownPeers[randIndex].peerId)
 		}
 	}
 
 	shuffle(webChannel) {
 		// let partialView
-		let oldest = webChannel.channels.knownPeers[0]
+		let oldest = webChannel.knownPeers[0]
 		let sample
+		let isDeleted
+
+		console.log()
+		console.log('------ Shuffle ------')
 
 		//increment age
-		webChannel.channels.knownPeers.forEach((kp) => { if (kp != 'undefined') { kp.peerAge = kp.peerAge + 1 } })
+		webChannel.knownPeers.forEach((kp) => { if (kp != 'undefined') { kp.peerAge = kp.peerAge + 1 } })
 
 		//getoldest
-		webChannel.channels.knownPeers.forEach((kp) => {
+		webChannel.knownPeers.forEach((kp) => {
 			if (kp != 'undefined') {
 				if (kp.peerAge > oldest.peerAge) { oldest = kp }
 			}
@@ -1499,100 +1529,151 @@ class SprayService extends WebChannelManagerInterface {
 		// if oldest is unreachable handle it and repeat process
 
 		// select half of the neighbors excluding one occurrence of oldest
-		// partialView = webChannel.channels.knownPeers
-		// partialView[partialView.indexOf(oldest)] = {peerId: webChannel.myId, peerAge: 0}
-		sample = webChannel.getSample(webChannel.channels.knownPeers, Math.ceil(webChannel.channels.knownPeers.length / 2) -1)
+		sample = webChannel.getSample(webChannel.knownPeers, Math.ceil(webChannel.knownPeers.length / 2) -1)
 
-		// replace oldest occurrences with itself occurrences and send it to oldest
+		// replace oldest occurrences with itself occurrences
 		sample.forEach((kp) => {
 			if (kp.peerId === oldest.peerId) {
 				kp.peerId = webChannel.myId
 			}
 		})
 
-		// add one occurrence of itself to this sample
+		// add one occurrence of itself to this sample and send this sample to oldest
 		sample.push({peerId: webChannel.myId, peerAge: 0})
 
 		console.log('myId :', webChannel.myId)
-		console.log('knownPeers: ', webChannel.channels.knownPeers)
+		console.log('knownPeers: ', webChannel.knownPeers)
 		console.log('oldest: ', oldest)
 		console.log('sample :', sample)
 
 		webChannel.sendToPeerForShuffle(oldest.peerId, {origin: webChannel.myId, sample})
-		// this.sendTo(oldest.peerId, webChannel, JSON.stringify(sample))
 
-		// get response of oldest
-
+		// replace itself occurrences with oldest occurrences and delete the sample from the partial view
 		sample.forEach((kp) => {
 			if (kp.peerId === webChannel.myId) {
 				kp.peerId = oldest.peerId
 			}
 		})
 
-		// delete the sample sent to oldest
-		let isDeleted
 		for (let i = 0 ; i < sample.length ; i++) {
 			isDeleted = false
-			for (let j = 0 ; j < webChannel.channels.knownPeers.length ; j++) {
-				if (webChannel.channels.knownPeers[j] != 'undefined') {
-					if (!isDeleted && webChannel.channels.knownPeers[j].peerId === sample[i].peerId 
-					  && webChannel.channels.knownPeers[j].peerAge === sample[i].peerAge) {
-						delete webChannel.channels.knownPeers[j]
+			for (let j = 0 ; j < webChannel.knownPeers.length ; j++) {
+				if (webChannel.knownPeers[j] != 'undefined') {
+					if (!isDeleted && webChannel.knownPeers[j].peerId === sample[i].peerId ) {
+						delete webChannel.knownPeers[j]
+						console.log('myId :', webChannel.myId, 'deleted :', sample[i].peerId)
 						isDeleted = true
 					}
 				}
 			}
 		}
 
-		webChannel.channels.knownPeers.sort()
-		webChannel.channels.knownPeers.length = webChannel.channels.knownPeers.length - sample.length
+		// some lines to avoid undefined elements
+		webChannel.knownPeers.sort()
+		webChannel.knownPeers.length = webChannel.knownPeers.length - sample.length
 
-		console.log('new knownPeers: ', webChannel.channels.knownPeers)
-		// remove an occurrence of oldest
+		console.log('new knownPeers: ', webChannel.knownPeers)
 	}
 
 	onExchange(webChannel, originId, sample) {
-		let responseSample = webChannel.getSample(webChannel.channels.knownPeers, Math.ceil(webChannel.channels.knownPeers.length / 2))
+		let responseSample = webChannel.getSample(webChannel.knownPeers, Math.ceil(webChannel.knownPeers.length / 2))
+		let isDeleted
 
-		console.log('myId', webChannel.myId, 'knownPeers: ', webChannel.channels.knownPeers)
+		console.log()
+		console.log('------ onExchange ------')
+		console.log('myId', webChannel.myId, 'knownPeers: ', webChannel.knownPeers)
+		console.log('received sample:', sample, 'origin:', originId)
 
-		// replace origin occurrences with itself occurrences and send it to origin
+		// replace origin occurrences with itself occurrences and send the response to origin
 		responseSample.forEach((kp) => {
 			if (kp.peerId === originId) {
 				kp.peerId = webChannel.myId
 			}
 		})
 
-		console.log('myId', webChannel.myId, 'answer :', responseSample)
+		console.log('myId', webChannel.myId, 'answer :', responseSample, 'dest:', originId)
+		console.log('knownpeers', webChannel.knownPeers)
 
 		webChannel.sendToPeerForShuffleAnswer(originId, responseSample)
 
+		// replace itself occurrences with origin occurrences and delete the sample from the partial view
 		responseSample.forEach((kp) => {
 			if (kp.peerId === webChannel.myId) {
 				kp.peerId = originId
 			}
 		})
 
-		let isDeleted
 		for (let i = 0 ; i < responseSample.length ; i++) {
 			isDeleted = false
-			for (let j = 0 ; j < webChannel.channels.knownPeers.length ; j++) {
-				if (webChannel.channels.knownPeers[j] != 'undefined') {
-					if (!isDeleted && webChannel.channels.knownPeers[j].peerId === responseSample[i].peerId 
-					  && webChannel.channels.knownPeers[j].peerAge === responseSample[i].peerAge) {
-						delete webChannel.channels.knownPeers[j]
+			for (let j = 0 ; j < webChannel.knownPeers.length ; j++) {
+				if (webChannel.knownPeers[j] != 'undefined') {
+					// TODO: Il est possible que le check de l'age pose problème. A tester
+					if (!isDeleted && webChannel.knownPeers[j].peerId === responseSample[i].peerId 
+					  && webChannel.knownPeers[j].peerAge === responseSample[i].peerAge) {
+						delete webChannel.knownPeers[j]
+						console.log('myId :', webChannel.myId, 'deleted :', responseSample[i].peerId)
 						isDeleted = true
 					}
 				}
 			}
 		}
 
-		webChannel.channels.knownPeers.sort()
-		webChannel.channels.knownPeers.length = webChannel.channels.knownPeers.length - sample.length
-		
-		webChannel.channels.knownPeers.concat(sample)
+		// some lines to avoid undefined elements
+		webChannel.knownPeers.sort()
+		webChannel.knownPeers.length = webChannel.knownPeers.length - responseSample.length
 
-		console.log('myId', webChannel.myId, 'new knownPeers apres concat: ', webChannel.channels.knownPeers)
+		// add the sample send by the origin to the partial view
+		webChannel.knownPeers = webChannel.knownPeers.concat(sample)
+
+		console.log('new knownpeers', webChannel.knownPeers)
+		console.log('channels', webChannel.channels)
+
+		this.updateChannels(webChannel)
+	}
+
+	onShuffleEnd(webChannel, sample) {
+		console.log()
+		console.log('------ onShuffleEnd ------')
+		console.log('myId', webChannel.myId, 'knownPeers: ', webChannel.knownPeers)
+		webChannel.knownPeers = webChannel.knownPeers.concat(sample)
+		console.log('myId', webChannel.myId, 'new knownPeers: ', webChannel.knownPeers)
+		this.updateChannels(webChannel)
+	}
+
+	updateChannels(webChannel) {
+		console.log('WC:', webChannel.myId, webChannel.knownPeers)
+		let isKnown
+		let hasChannel
+		for (let c of webChannel.channels) {
+			isKnown = false
+			for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
+				if (webChannel.knownPeers[i].peerId === c.peerId) {
+					isKnown = true
+					break
+				}
+			}
+			if (!isKnown) {
+				webChannel.channels.delete(c)
+			}
+		}
+
+		console.log(webChannel.knownPeers.length)
+		for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
+			console.log('azeui')
+			hasChannel = false
+			for (let c of webChannel.channels) {
+				if (c.peerId === webChannel.knownPeers[i].peerId) {
+					hasChannel = true
+					break
+				}
+			}
+			if (!hasChannel) {
+				// create a new channel
+				console.log('hi')
+				this.connectWith(webChannel, webChannel.knownPeers[i].peerId, null, new Set([webChannel.myId]), new Set())
+			}
+			//connect_with
+		}
 	}
 
 	leave(webChannel) {}
@@ -3109,6 +3190,8 @@ const SHUFFLE = 13
 
 const SHUFFLE_ANSWER = 14
 
+const FORWARD_MESSAGE = 15
+
 /**
  * Constant used to send a message to the server in order that
  * he can join the webcahnnel
@@ -3162,7 +3245,8 @@ class WebChannel {
      * @type {external:Set}
      */
     this.channels = new Set()
-    this.channels.knownPeers = []
+
+    this.knownPeers = []
 
     /**
      * This event handler is used to resolve *Promise* in {@link WebChannel#join}.
@@ -3279,7 +3363,9 @@ class WebChannel {
       }, channel.peerId)
     )
     return this.manager.add(channel)
-      .then(() => channel.send(msgBld.msg(JOIN_FINILIZE)))
+      .then(() => {
+        channel.send(msgBld.msg(JOIN_FINILIZE))
+      })
       .catch((msg) => {
         this.manager.broadcast(this, msgBld.msg(
           REMOVE_NEW_MEMBER, {id: channel.peerId})
@@ -3438,6 +3524,22 @@ class WebChannel {
     }
   }
 
+  forwardMsg(destId, data, interId) {
+    console.log('forwarded data :', data, 'to', destId, 'by', interId)
+    // if the case where wc sends to itself exists, it is a bug
+    // if (interId === this.myId) {
+    //   this.manager.sendTo(destId, this, data)
+    // } else 
+    if (this.channels.size !== 0) {
+      let code = msgBld.readHeader(data).code
+      let receivedMsg = msgBld.readInternalMessage(data)
+      let toSend = {data: receivedMsg, code, destId}
+      console.log(toSend)
+      let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
+      this.manager.sendTo(interId, this, mes)
+    }
+  }
+
   /**
    * Get the ping of the *WebChannel*. It is an amount in milliseconds which
    * corresponds to the longest ping to each *WebChannel* member.
@@ -3500,7 +3602,26 @@ class WebChannel {
           }
         // If the recepient is a member of webChannel
         } else {
-          this.manager.sendTo(recepient, this, fullMsg)
+          if (this.topology === SPRAY) {
+            let isKnownPeer = false
+            for (let i = 0 ; i < this.knownPeers.length ; i++) {
+              if (this.knownPeers[i].peerId === recipient) {
+                isKnownPeer = true
+                break
+              }
+            }
+            if (isKnownPeer) {
+              this.manager.sendTo(recepient, this, fullMsg)
+            } else {
+              this.channels.forEach((c) => {
+                if (c.peerId === recepient) {
+                  c.send(fullMsg)
+                }
+              })
+            }
+          } else {
+            this.manager.sendTo(recepient, this, fullMsg)
+          }
         }
       }
     }
@@ -3554,15 +3675,20 @@ class WebChannel {
           this.removeJoiningPeer(msg.id)
           break
         case JOIN_FINILIZE:
+          // this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
           this.joinSuccess(this.myId)
           if (this.topology === FULLY_CONNECTED) {
             this.manager.broadcast(this, msgBld.msg(JOIN_SUCCESS))
           } else if (this.topology === SPRAY) {
-            this.channels.knownPeers.forEach((kp) => { if (kp != 'undefined') { this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS)) } })
+            let size = this.knownPeers.length
+            this.knownPeers[size] = {peerId: channel.peerId, peerAge: 0}
+            this.knownPeers.forEach((kp) => { if (kp != 'undefined') { this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS)) } })
+            
           }
           this.onJoin()
           break
         case JOIN_SUCCESS:
+          // this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
           this.joinSuccess(header.senderId)
           this.peerNb++
           this.onJoining(header.senderId)
@@ -3584,12 +3710,28 @@ class WebChannel {
           }
           break
         case SHUFFLE:
-          this.manager.onExchange(this, msg.origin, msg.sample)
+          console.log()
+          console.log('------ WC: Shuffle ------')
           console.log('myId', this.myId, 'shuffle', msg)
+          this.manager.onExchange(this, msg.origin, msg.sample)
           break
         case SHUFFLE_ANSWER:
+          console.log()
+          console.log('------ WC: Shuffle answer ------')
           console.log('myId', this.myId, 'shuffle_anwser', msg)
-          // this.manager.onShuffleEnd(this, msg)
+          this.manager.onShuffleEnd(this, msg)
+          break
+        case FORWARD_MESSAGE:
+          console.log('------ I forward ------')
+          console.log('myId:', this.myId)
+          console.log(msg)
+          if (msg.code === SHUFFLE_ANSWER) {
+            if (msg.destId === this.myId) {
+              this.manager.onShuffleEnd(this, msg.data)
+            } else {
+              this.manager.sendTo(msg.destId, this, msgBld.msg(SHUFFLE_ANSWER, msg.data, msg.destId))
+            }
+          }
           break
         default:
           throw new Error(`Unknown message type code: "${header.code}"`)
@@ -3672,11 +3814,11 @@ class WebChannel {
     let jp = this.getJoiningPeer(id)
     jp.channelsToAdd.forEach((c) => {
       this.channels.add(c)
-      this.channels.knownPeers[this.channels.knownPeers.length] = {peerId: c.peerId, peerAge: 0}
+      // this.knownPeers[this.knownPeers.length] = {peerId: c.peerId, peerAge: 0}
     })
     // TODO: handle channels which should be closed & removed
     this.joiningPeers.delete(jp)
-    // console.log('myId :', this.myId, this.channels.knownPeers)
+    // console.log('myId :', this.myId, this.knownPeers)
   }
 
   /**
@@ -3712,7 +3854,7 @@ class WebChannel {
    * @param  {number} jpId - Joining peer id
    * @param  {number} intermediaryId - The id of the peer through whom the
    * joining peer joins the *WebChannel*
-   * @param  {Channel} [intermediaryChannel] - Intermediary channel bitween the
+   * @param  {Channel} [intermediaryChannel] - Intermediary channel between the
    * joining peer and his intermediary peer
    * @returns {JoiningPeer} - Just added joining peer
    */
@@ -3798,7 +3940,7 @@ class WebChannel {
     let index
 
     while (indexes.length < size) {
-      index = Math.ceil(Math.random() * partialView.length) -1
+      index = Math.ceil(Math.random() * partialView.length) - 1
       if (!indexes.includes(index)) {
         indexes[indexes.length] = index
       }
@@ -3808,7 +3950,7 @@ class WebChannel {
       sample[i] = partialView[indexes[i]]
     }
 
-    return sample
+    return JSON.parse(JSON.stringify(sample))
   }
 }
 

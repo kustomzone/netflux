@@ -1,0 +1,18 @@
+Netflux is using the wrtc node library to have WebRTC connections in the node environment.
+To make sure that this library will work properly you have to install :
+
+    python2
+    git
+    pkg-config
+    libncurses-devel
+    libssl-devel
+    libnss-devel
+    libexpat-devel
+
+On Debian / Ubuntu, run :
+apt-get install python2.7 git-all pkg-config libncurses5-dev libssl-dev libnss3-dev libexpat-dev
+
+On CentOS / Fedora / RHEL, run :
+yum install python git pkgconfig openssl-devel ncurses-devel nss-devel expat-devel
+
+Check https://github.com/js-platform/node-webrtc for further informations

@@ -100,6 +100,8 @@ const SHUFFLE = 13
 
 const SHUFFLE_ANSWER = 14
 
+const FORWARD_MESSAGE = 15
+
 /**
  * Constant used to send a message to the server in order that
  * he can join the webcahnnel
@@ -153,7 +155,8 @@ class WebChannel {
      * @type {external:Set}
      */
     this.channels = new Set()
-    this.channels.knownPeers = []
+
+    this.knownPeers = []
 
     /**
      * This event handler is used to resolve *Promise* in {@link WebChannel#join}.
@@ -270,7 +273,9 @@ class WebChannel {
       }, channel.peerId)
     )
     return this.manager.add(channel)
-      .then(() => channel.send(msgBld.msg(JOIN_FINILIZE)))
+      .then(() => {
+        channel.send(msgBld.msg(JOIN_FINILIZE))
+      })
       .catch((msg) => {
         this.manager.broadcast(this, msgBld.msg(
           REMOVE_NEW_MEMBER, {id: channel.peerId})
@@ -429,6 +434,22 @@ class WebChannel {
     }
   }
 
+  forwardMsg(destId, data, interId) {
+    console.log('forwarded data :', data, 'to', destId, 'by', interId)
+    // if the case where wc sends to itself exists, it is a bug
+    // if (interId === this.myId) {
+    //   this.manager.sendTo(destId, this, data)
+    // } else 
+    if (this.channels.size !== 0) {
+      let code = msgBld.readHeader(data).code
+      let receivedMsg = msgBld.readInternalMessage(data)
+      let toSend = {data: receivedMsg, code, destId}
+      console.log(toSend)
+      let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
+      this.manager.sendTo(interId, this, mes)
+    }
+  }
+
   /**
    * Get the ping of the *WebChannel*. It is an amount in milliseconds which
    * corresponds to the longest ping to each *WebChannel* member.
@@ -491,7 +512,26 @@ class WebChannel {
           }
         // If the recepient is a member of webChannel
         } else {
-          this.manager.sendTo(recepient, this, fullMsg)
+          if (this.topology === SPRAY) {
+            let isKnownPeer = false
+            for (let i = 0 ; i < this.knownPeers.length ; i++) {
+              if (this.knownPeers[i].peerId === recipient) {
+                isKnownPeer = true
+                break
+              }
+            }
+            if (isKnownPeer) {
+              this.manager.sendTo(recepient, this, fullMsg)
+            } else {
+              this.channels.forEach((c) => {
+                if (c.peerId === recepient) {
+                  c.send(fullMsg)
+                }
+              })
+            }
+          } else {
+            this.manager.sendTo(recepient, this, fullMsg)
+          }
         }
       }
     }
@@ -545,15 +585,20 @@ class WebChannel {
           this.removeJoiningPeer(msg.id)
           break
         case JOIN_FINILIZE:
+          // this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
           this.joinSuccess(this.myId)
           if (this.topology === FULLY_CONNECTED) {
             this.manager.broadcast(this, msgBld.msg(JOIN_SUCCESS))
           } else if (this.topology === SPRAY) {
-            this.channels.knownPeers.forEach((kp) => { if (kp != 'undefined') { this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS)) } })
+            let size = this.knownPeers.length
+            this.knownPeers[size] = {peerId: channel.peerId, peerAge: 0}
+            this.knownPeers.forEach((kp) => { if (kp != 'undefined') { this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS)) } })
+            
           }
           this.onJoin()
           break
         case JOIN_SUCCESS:
+          // this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
           this.joinSuccess(header.senderId)
           this.peerNb++
           this.onJoining(header.senderId)
@@ -575,12 +620,28 @@ class WebChannel {
           }
           break
         case SHUFFLE:
-          this.manager.onExchange(this, msg.origin, msg.sample)
+          console.log()
+          console.log('------ WC: Shuffle ------')
           console.log('myId', this.myId, 'shuffle', msg)
+          this.manager.onExchange(this, msg.origin, msg.sample)
           break
         case SHUFFLE_ANSWER:
+          console.log()
+          console.log('------ WC: Shuffle answer ------')
           console.log('myId', this.myId, 'shuffle_anwser', msg)
-          // this.manager.onShuffleEnd(this, msg)
+          this.manager.onShuffleEnd(this, msg)
+          break
+        case FORWARD_MESSAGE:
+          console.log('------ I forward ------')
+          console.log('myId:', this.myId)
+          console.log(msg)
+          if (msg.code === SHUFFLE_ANSWER) {
+            if (msg.destId === this.myId) {
+              this.manager.onShuffleEnd(this, msg.data)
+            } else {
+              this.manager.sendTo(msg.destId, this, msgBld.msg(SHUFFLE_ANSWER, msg.data, msg.destId))
+            }
+          }
           break
         default:
           throw new Error(`Unknown message type code: "${header.code}"`)
@@ -663,11 +724,11 @@ class WebChannel {
     let jp = this.getJoiningPeer(id)
     jp.channelsToAdd.forEach((c) => {
       this.channels.add(c)
-      this.channels.knownPeers[this.channels.knownPeers.length] = {peerId: c.peerId, peerAge: 0}
+      // this.knownPeers[this.knownPeers.length] = {peerId: c.peerId, peerAge: 0}
     })
     // TODO: handle channels which should be closed & removed
     this.joiningPeers.delete(jp)
-    // console.log('myId :', this.myId, this.channels.knownPeers)
+    // console.log('myId :', this.myId, this.knownPeers)
   }
 
   /**
@@ -703,7 +764,7 @@ class WebChannel {
    * @param  {number} jpId - Joining peer id
    * @param  {number} intermediaryId - The id of the peer through whom the
    * joining peer joins the *WebChannel*
-   * @param  {Channel} [intermediaryChannel] - Intermediary channel bitween the
+   * @param  {Channel} [intermediaryChannel] - Intermediary channel between the
    * joining peer and his intermediary peer
    * @returns {JoiningPeer} - Just added joining peer
    */
@@ -789,7 +850,7 @@ class WebChannel {
     let index
 
     while (indexes.length < size) {
-      index = Math.ceil(Math.random() * partialView.length) -1
+      index = Math.ceil(Math.random() * partialView.length) - 1
       if (!indexes.includes(index)) {
         indexes[indexes.length] = index
       }
@@ -799,7 +860,7 @@ class WebChannel {
       sample[i] = partialView[indexes[i]]
     }
 
-    return sample
+    return JSON.parse(JSON.stringify(sample))
   }
 }
 
