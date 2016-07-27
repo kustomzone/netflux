@@ -126,6 +126,7 @@ class WebChannelManagerInterface extends ServiceInterface {
    * @return {Promise} - Is resolved once some of the connections could be established. It is rejected when an error occured.
    */
   connectWith (wc, id, jpId, peerIds, jpIds) {
+    // console.log('Connect with will send to', id)
     let joiningPeers = []
     jpIds.forEach((id) => {
       let jp = wc.getJoiningPeer(id)

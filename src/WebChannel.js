@@ -435,7 +435,7 @@ class WebChannel {
   }
 
   forwardMsg(destId, data, interId) {
-    console.log('forwarded data :', data, 'to', destId, 'by', interId)
+    // console.log('forwarded data :', data, 'to', destId, 'by', interId)
     // if the case where wc sends to itself exists, it is a bug
     // if (interId === this.myId) {
     //   this.manager.sendTo(destId, this, data)
@@ -444,7 +444,7 @@ class WebChannel {
       let code = msgBld.readHeader(data).code
       let receivedMsg = msgBld.readInternalMessage(data)
       let toSend = {data: receivedMsg, code, destId}
-      console.log(toSend)
+      // console.log(toSend)
       let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
       this.manager.sendTo(interId, this, mes)
     }
@@ -496,6 +496,7 @@ class WebChannel {
     } else {
       // If this function caller is a peer who is joining
       if (this.isJoining()) {
+        // console.log('I am joining', this.myId, 'through', this.getJoiningPeer(this.myId).intermediaryChannel.peerId)
         this.getJoiningPeer(this.myId)
           .intermediaryChannel
           .send(fullMsg)
@@ -515,7 +516,7 @@ class WebChannel {
           if (this.topology === SPRAY) {
             let isKnownPeer = false
             for (let i = 0 ; i < this.knownPeers.length ; i++) {
-              if (this.knownPeers[i].peerId === recipient) {
+              if (this.knownPeers[i].peerId === recepient) {
                 isKnownPeer = true
                 break
               }
@@ -529,7 +530,7 @@ class WebChannel {
                 }
               })
             }
-          } else {
+          } else if (this.topology === FULLY_CONNECTED) {
             this.manager.sendTo(recepient, this, fullMsg)
           }
         }
@@ -565,6 +566,7 @@ class WebChannel {
           // this.onLeaving(msg.id)
           break
         case SERVICE_DATA:
+          // console.log(msg.data)
           if (this.myId === header.recepientId) {
             provide(msg.serviceName, this.settings).onMessage(this, channel, msg.data)
           } else {
@@ -580,28 +582,64 @@ class WebChannel {
           break
         case JOIN_NEW_MEMBER:
           this.addJoiningPeer(msg.newId, header.senderId)
+          // console.log('adding JP, myId, intermediraryId, KP', this.myId, header.senderId, this.knownPeers)
           break
         case REMOVE_NEW_MEMBER:
           this.removeJoiningPeer(msg.id)
           break
         case JOIN_FINILIZE:
-          // this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
           this.joinSuccess(this.myId)
           if (this.topology === FULLY_CONNECTED) {
             this.manager.broadcast(this, msgBld.msg(JOIN_SUCCESS))
           } else if (this.topology === SPRAY) {
-            let size = this.knownPeers.length
-            this.knownPeers[size] = {peerId: channel.peerId, peerAge: 0}
-            this.knownPeers.forEach((kp) => { if (kp != 'undefined') { this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS)) } })
-            
+            this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
+            this.knownPeers.forEach((kp) => { 
+              if (typeof kp !== 'undefined') { 
+                // console.log('--------------------------Finilize kp :', kp, 'myId', this.myId)
+                // console.log('I am', this.myId, 'and I am finilizing connection with', header.senderId)
+                this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS, {id: this.myId})) 
+              } 
+            })
           }
           this.onJoin()
           break
         case JOIN_SUCCESS:
-          // this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
-          this.joinSuccess(header.senderId)
-          this.peerNb++
-          this.onJoining(header.senderId)
+          if (this.topology === FULLY_CONNECTED) {
+            this.joinSuccess(header.senderId)
+            this.peerNb++
+            this.onJoining(header.senderId)
+          } else if (this.topology === SPRAY) {
+            if (msg.id === header.senderId) {
+              this.joinSuccess(header.senderId)
+              this.peerNb++
+              this.knownPeers.forEach((kp) => { 
+                if (typeof kp !== 'undefined') {
+                  this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS, {id: msg.id})) 
+                } 
+              })
+              this.onJoining(header.senderId)
+            } else {
+              this.joinSuccess(msg.id)
+              this.peerNb++
+              this.onJoining(msg.id)
+              this.knownPeers[this.knownPeers.length] = {peerId: msg.id, peerAge: 0}
+            }
+            
+          }
+
+          
+          // if (this.topology === SPRAY) {
+            // this.knownPeers.forEach((kp) => { 
+              // if (kp != 'undefined') { 
+                // console.log('--------------------------Success kp :', kp, 'myId', this.myId)
+                // console.log('I am', this.myId, 'and I am saying to', kp.peerId, 'to connect with', header.senderId)
+                // console.log(header, msg)
+                // console.log('i send connect _to', header.senderId, 'to :', kp.peerId)
+                // this.channels.forEach((c) => console.log(c))
+                // this.manager.sendTo(kp.peerId, this, msgBld.msg(CONNECT_TO, {id: header.senderId})) 
+              // } 
+            // })
+          // }
           break
         case INIT_CHANNEL_PONG:
           channel.onPong()
@@ -620,21 +658,21 @@ class WebChannel {
           }
           break
         case SHUFFLE:
-          console.log()
-          console.log('------ WC: Shuffle ------')
-          console.log('myId', this.myId, 'shuffle', msg)
+          // console.log()
+          // console.log('------ WC: Shuffle ------')
+          // console.log('myId', this.myId, 'shuffle', msg)
           this.manager.onExchange(this, msg.origin, msg.sample)
           break
         case SHUFFLE_ANSWER:
-          console.log()
-          console.log('------ WC: Shuffle answer ------')
-          console.log('myId', this.myId, 'shuffle_anwser', msg)
+          // console.log()
+          // console.log('------ WC: Shuffle answer ------')
+          // console.log('myId', this.myId, 'shuffle_anwser', msg)
           this.manager.onShuffleEnd(this, msg)
           break
         case FORWARD_MESSAGE:
-          console.log('------ I forward ------')
-          console.log('myId:', this.myId)
-          console.log(msg)
+          // console.log('------ I forward ------')
+          // console.log('myId:', this.myId)
+          // console.log(msg)
           if (msg.code === SHUFFLE_ANSWER) {
             if (msg.destId === this.myId) {
               this.manager.onShuffleEnd(this, msg.data)
@@ -724,7 +762,6 @@ class WebChannel {
     let jp = this.getJoiningPeer(id)
     jp.channelsToAdd.forEach((c) => {
       this.channels.add(c)
-      // this.knownPeers[this.knownPeers.length] = {peerId: c.peerId, peerAge: 0}
     })
     // TODO: handle channels which should be closed & removed
     this.joiningPeers.delete(jp)

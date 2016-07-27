@@ -1286,6 +1286,7 @@ class WebChannelManagerInterface extends ServiceInterface {
    * @return {Promise} - Is resolved once some of the connections could be established. It is rejected when an error occured.
    */
   connectWith (wc, id, jpId, peerIds, jpIds) {
+    // console.log('Connect with will send to', id)
     let joiningPeers = []
     jpIds.forEach((id) => {
       let jp = wc.getJoiningPeer(id)
@@ -1433,6 +1434,77 @@ class FullyConnectedService extends WebChannelManagerInterface {
   leave (webChannel) {}
 }
 
+const NEW_CHANNEL$1 = 'newChannel'
+
+class ChannelBuilderService extends ServiceInterface {
+  constructor (options = {}) {
+    super()
+    this.default = {
+      connectors: [WEBRTC],
+      host: '',
+      port: 0
+    }
+    this.settings = Object.assign({}, this.defaults, options)
+  }
+
+  connectMeTo (wc, id) {
+    return new Promise((resolve, reject) => {
+      this.addPendingRequest(wc, id, {resolve, reject})
+      let connectors = [WEBRTC]
+      if (typeof window === 'undefined') connectors.push(WEBSOCKET)
+      let host = wc.settings.host
+      let port = wc.settings.port
+      wc.sendSrvMsg(this.name, id, {connectors, sender: wc.myId, host, port, oneMsg: true})
+    })
+  }
+
+  onChannel (wc, channel, oneMsg, sender) {
+    if (!oneMsg) wc.initChannel(channel, false, sender)
+    else this.getPendingRequest(wc, sender).resolve(channel)
+  }
+
+  onMessage (wc, channel, msg) {
+    let availabled = msg.connectors
+    let host = msg.host
+    let port = msg.port
+    let settings = Object.assign({}, wc.settings, {host, port})
+
+    if (availabled.indexOf(WEBSOCKET) > -1) {
+      // A Bot server send the message
+      let cBuilder = provide(WEBSOCKET, settings)
+
+      let url = 'ws://' + host + ':' + port
+      // Try to connect in WebSocket
+      cBuilder.connect(url)
+        .then((channel) => {
+          channel.send(JSON.stringify({code: NEW_CHANNEL$1, sender: wc.myId,
+            wcId: wc.id, oneMsg: msg.oneMsg}))
+          this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
+        })
+        .catch(() => {
+          cBuilder = provide(WEBRTC)
+          cBuilder.connectOverWebChannel(wc, msg.sender)
+            .then((channel) => {
+              this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
+            })
+        })
+    } else if (typeof window !== 'undefined') {
+      // The peer who send the message isn't a bot and i'm not a bot too
+      let cBuilder = provide(WEBRTC)
+      cBuilder.connectOverWebChannel(wc, msg.sender)
+        .then((channel) => {
+          this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
+        })
+    } else {
+      // The peer who send the message isn't a bot and i'm bot
+      host = wc.settings.host
+      port = wc.settings.port
+      wc.sendSrvMsg(this.name, msg.sender, {connectors: [WEBRTC, WEBSOCKET],
+        sender: wc.myId, host, port, oneMsg: false})
+    }
+  }
+}
+
 /**
  * Spray web channel manager. Implements spray topology
  * network, when each peer is connected to ln(N) other peers.
@@ -1446,16 +1518,18 @@ class SprayService extends WebChannelManagerInterface {
 	}
 
 	add(channel) {
-		// actual : add from fully_connected...
 		let wc = channel.webChannel
 	    let peerIds = new Set([wc.myId])
 	    let jpIds = new Set()
-	    wc.channels.forEach((c) => peerIds.add(c.peerId))
-	    wc.getJoiningPeers().forEach((jp) => {
-		    if (channel.peerId !== jp.id && !peerIds.has(jp.id)) {
-		        jpIds.add(jp.id)
-		    }
-	    })
+	    for (let i = 0 ; i < wc.knownPeers.length ; i++) {
+	    	peerIds.add(wc.knownPeers[i].peerId)
+	    }
+	    // wc.getJoiningPeers().forEach((jp) => {
+		   //  if (channel.peerId !== jp.id && !peerIds.has(jp.id)) {
+		   //      jpIds.add(jp.id)
+		   //  }
+	    // })
+	    // console.log('joiningPeers:', jpIds)
 	    return this.connectWith(wc, channel.peerId, channel.peerId, [...peerIds], [...jpIds])
 	}
 
@@ -1469,12 +1543,13 @@ class SprayService extends WebChannelManagerInterface {
 	}
 
 	sendTo(id, webChannel, data) {
+		// console.log('from', webChannel.myId, 'to', id)
 		let directChannelExists = false
 		let isKnownPeer = false
 		let channelExists = false
 		let randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
 		for (let kp of webChannel.knownPeers) {
-			if (kp != 'undefined') {
+			if (typeof kp !== 'undefined') {
 				if (kp.peerId === id) {
 					isKnownPeer = true
 				}
@@ -1517,11 +1592,11 @@ class SprayService extends WebChannelManagerInterface {
 		console.log('------ Shuffle ------')
 
 		//increment age
-		webChannel.knownPeers.forEach((kp) => { if (kp != 'undefined') { kp.peerAge = kp.peerAge + 1 } })
+		webChannel.knownPeers.forEach((kp) => { if (typeof kp !== 'undefined') { kp.peerAge = kp.peerAge + 1 } })
 
 		//getoldest
 		webChannel.knownPeers.forEach((kp) => {
-			if (kp != 'undefined') {
+			if (typeof kp !== 'undefined') {
 				if (kp.peerAge > oldest.peerAge) { oldest = kp }
 			}
 		})
@@ -1530,6 +1605,9 @@ class SprayService extends WebChannelManagerInterface {
 
 		// select half of the neighbors excluding one occurrence of oldest
 		sample = webChannel.getSample(webChannel.knownPeers, Math.ceil(webChannel.knownPeers.length / 2) -1)
+
+
+		console.log('sample :', sample)
 
 		// replace oldest occurrences with itself occurrences
 		sample.forEach((kp) => {
@@ -1558,10 +1636,11 @@ class SprayService extends WebChannelManagerInterface {
 		for (let i = 0 ; i < sample.length ; i++) {
 			isDeleted = false
 			for (let j = 0 ; j < webChannel.knownPeers.length ; j++) {
-				if (webChannel.knownPeers[j] != 'undefined') {
+				if (typeof webChannel.knownPeers[j] !== 'undefined') {
+					console.log(webChannel.knownPeers[j])
 					if (!isDeleted && webChannel.knownPeers[j].peerId === sample[i].peerId ) {
 						delete webChannel.knownPeers[j]
-						console.log('myId :', webChannel.myId, 'deleted :', sample[i].peerId)
+						// console.log('myId :', webChannel.myId, 'deleted :', sample[i].peerId)
 						isDeleted = true
 					}
 				}
@@ -1606,12 +1685,12 @@ class SprayService extends WebChannelManagerInterface {
 		for (let i = 0 ; i < responseSample.length ; i++) {
 			isDeleted = false
 			for (let j = 0 ; j < webChannel.knownPeers.length ; j++) {
-				if (webChannel.knownPeers[j] != 'undefined') {
+				if (typeof webChannel.knownPeers[j] !== 'undefined') {
 					// TODO: Il est possible que le check de l'age pose problème. A tester
 					if (!isDeleted && webChannel.knownPeers[j].peerId === responseSample[i].peerId 
 					  && webChannel.knownPeers[j].peerAge === responseSample[i].peerAge) {
 						delete webChannel.knownPeers[j]
-						console.log('myId :', webChannel.myId, 'deleted :', responseSample[i].peerId)
+						// console.log('myId :', webChannel.myId, 'deleted :', responseSample[i].peerId)
 						isDeleted = true
 					}
 				}
@@ -1624,11 +1703,11 @@ class SprayService extends WebChannelManagerInterface {
 
 		// add the sample send by the origin to the partial view
 		webChannel.knownPeers = webChannel.knownPeers.concat(sample)
-
 		console.log('new knownpeers', webChannel.knownPeers)
-		console.log('channels', webChannel.channels)
 
 		this.updateChannels(webChannel)
+
+		console.log('channels', webChannel.channels)
 	}
 
 	onShuffleEnd(webChannel, sample) {
@@ -1638,30 +1717,18 @@ class SprayService extends WebChannelManagerInterface {
 		webChannel.knownPeers = webChannel.knownPeers.concat(sample)
 		console.log('myId', webChannel.myId, 'new knownPeers: ', webChannel.knownPeers)
 		this.updateChannels(webChannel)
+		console.log('myId', webChannel.myId, 'new channels: ', webChannel.channels)
 	}
 
 	updateChannels(webChannel) {
-		console.log('WC:', webChannel.myId, webChannel.knownPeers)
+		// console.log('WC:', webChannel.myId, webChannel.knownPeers)
 		let isKnown
 		let hasChannel
-		for (let c of webChannel.channels) {
-			isKnown = false
-			for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
-				if (webChannel.knownPeers[i].peerId === c.peerId) {
-					isKnown = true
-					break
-				}
-			}
-			if (!isKnown) {
-				webChannel.channels.delete(c)
-			}
-		}
-
-		console.log(webChannel.knownPeers.length)
+		let cBlder = new ChannelBuilderService()
 		for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
-			console.log('azeui')
 			hasChannel = false
 			for (let c of webChannel.channels) {
+				console.log(c.peerId, webChannel.knownPeers[i].peerId)
 				if (c.peerId === webChannel.knownPeers[i].peerId) {
 					hasChannel = true
 					break
@@ -1669,10 +1736,24 @@ class SprayService extends WebChannelManagerInterface {
 			}
 			if (!hasChannel) {
 				// create a new channel
-				console.log('hi')
-				this.connectWith(webChannel, webChannel.knownPeers[i].peerId, null, new Set([webChannel.myId]), new Set())
+				console.log('I am trying to connect to', webChannel.knownPeers[i].peerId, '... Please wait.')
+				// this.connectWith(webChannel, webChannel.knownPeers[i].peerId, null, new Set([webChannel.myId]), new Set())
+				cBlder.connectMeTo(webChannel, webChannel.knownPeers[i].peerId)
 			}
-			//connect_with
+		}
+
+		for (let c of webChannel.channels) {
+			// console.log(webChannel.myId, c)
+			isKnown = false
+			for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
+				if (webChannel.knownPeers[i].peerId === c.peerId) {
+					isKnown = true
+					break
+				}
+			}
+			if (!isKnown && webChannel.channels.size > 1) {
+				webChannel.channels.delete(c)
+			}
 		}
 	}
 
@@ -2177,77 +2258,6 @@ class WebSocketService {
     })
   }
 
-}
-
-const NEW_CHANNEL$1 = 'newChannel'
-
-class ChannelBuilderService extends ServiceInterface {
-  constructor (options = {}) {
-    super()
-    this.default = {
-      connectors: [WEBRTC],
-      host: '',
-      port: 0
-    }
-    this.settings = Object.assign({}, this.defaults, options)
-  }
-
-  connectMeTo (wc, id) {
-    return new Promise((resolve, reject) => {
-      this.addPendingRequest(wc, id, {resolve, reject})
-      let connectors = [WEBRTC]
-      if (typeof window === 'undefined') connectors.push(WEBSOCKET)
-      let host = wc.settings.host
-      let port = wc.settings.port
-      wc.sendSrvMsg(this.name, id, {connectors, sender: wc.myId, host, port, oneMsg: true})
-    })
-  }
-
-  onChannel (wc, channel, oneMsg, sender) {
-    if (!oneMsg) wc.initChannel(channel, false, sender)
-    else this.getPendingRequest(wc, sender).resolve(channel)
-  }
-
-  onMessage (wc, channel, msg) {
-    let availabled = msg.connectors
-    let host = msg.host
-    let port = msg.port
-    let settings = Object.assign({}, wc.settings, {host, port})
-
-    if (availabled.indexOf(WEBSOCKET) > -1) {
-      // A Bot server send the message
-      let cBuilder = provide(WEBSOCKET, settings)
-
-      let url = 'ws://' + host + ':' + port
-      // Try to connect in WebSocket
-      cBuilder.connect(url)
-        .then((channel) => {
-          channel.send(JSON.stringify({code: NEW_CHANNEL$1, sender: wc.myId,
-            wcId: wc.id, oneMsg: msg.oneMsg}))
-          this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
-        })
-        .catch(() => {
-          cBuilder = provide(WEBRTC)
-          cBuilder.connectOverWebChannel(wc, msg.sender)
-            .then((channel) => {
-              this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
-            })
-        })
-    } else if (typeof window !== 'undefined') {
-      // The peer who send the message isn't a bot and i'm not a bot too
-      let cBuilder = provide(WEBRTC)
-      cBuilder.connectOverWebChannel(wc, msg.sender)
-        .then((channel) => {
-          this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
-        })
-    } else {
-      // The peer who send the message isn't a bot and i'm bot
-      host = wc.settings.host
-      port = wc.settings.port
-      wc.sendSrvMsg(this.name, msg.sender, {connectors: [WEBRTC, WEBSOCKET],
-        sender: wc.myId, host, port, oneMsg: false})
-    }
-  }
 }
 
 /**
@@ -3525,7 +3535,7 @@ class WebChannel {
   }
 
   forwardMsg(destId, data, interId) {
-    console.log('forwarded data :', data, 'to', destId, 'by', interId)
+    // console.log('forwarded data :', data, 'to', destId, 'by', interId)
     // if the case where wc sends to itself exists, it is a bug
     // if (interId === this.myId) {
     //   this.manager.sendTo(destId, this, data)
@@ -3534,7 +3544,7 @@ class WebChannel {
       let code = msgBld.readHeader(data).code
       let receivedMsg = msgBld.readInternalMessage(data)
       let toSend = {data: receivedMsg, code, destId}
-      console.log(toSend)
+      // console.log(toSend)
       let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
       this.manager.sendTo(interId, this, mes)
     }
@@ -3586,6 +3596,7 @@ class WebChannel {
     } else {
       // If this function caller is a peer who is joining
       if (this.isJoining()) {
+        // console.log('I am joining', this.myId, 'through', this.getJoiningPeer(this.myId).intermediaryChannel.peerId)
         this.getJoiningPeer(this.myId)
           .intermediaryChannel
           .send(fullMsg)
@@ -3605,7 +3616,7 @@ class WebChannel {
           if (this.topology === SPRAY) {
             let isKnownPeer = false
             for (let i = 0 ; i < this.knownPeers.length ; i++) {
-              if (this.knownPeers[i].peerId === recipient) {
+              if (this.knownPeers[i].peerId === recepient) {
                 isKnownPeer = true
                 break
               }
@@ -3619,7 +3630,7 @@ class WebChannel {
                 }
               })
             }
-          } else {
+          } else if (this.topology === FULLY_CONNECTED) {
             this.manager.sendTo(recepient, this, fullMsg)
           }
         }
@@ -3655,6 +3666,7 @@ class WebChannel {
           // this.onLeaving(msg.id)
           break
         case SERVICE_DATA:
+          // console.log(msg.data)
           if (this.myId === header.recepientId) {
             provide(msg.serviceName, this.settings).onMessage(this, channel, msg.data)
           } else {
@@ -3670,28 +3682,64 @@ class WebChannel {
           break
         case JOIN_NEW_MEMBER:
           this.addJoiningPeer(msg.newId, header.senderId)
+          // console.log('adding JP, myId, intermediraryId, KP', this.myId, header.senderId, this.knownPeers)
           break
         case REMOVE_NEW_MEMBER:
           this.removeJoiningPeer(msg.id)
           break
         case JOIN_FINILIZE:
-          // this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
           this.joinSuccess(this.myId)
           if (this.topology === FULLY_CONNECTED) {
             this.manager.broadcast(this, msgBld.msg(JOIN_SUCCESS))
           } else if (this.topology === SPRAY) {
-            let size = this.knownPeers.length
-            this.knownPeers[size] = {peerId: channel.peerId, peerAge: 0}
-            this.knownPeers.forEach((kp) => { if (kp != 'undefined') { this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS)) } })
-            
+            this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
+            this.knownPeers.forEach((kp) => { 
+              if (typeof kp !== 'undefined') { 
+                // console.log('--------------------------Finilize kp :', kp, 'myId', this.myId)
+                // console.log('I am', this.myId, 'and I am finilizing connection with', header.senderId)
+                this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS, {id: this.myId})) 
+              } 
+            })
           }
           this.onJoin()
           break
         case JOIN_SUCCESS:
-          // this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
-          this.joinSuccess(header.senderId)
-          this.peerNb++
-          this.onJoining(header.senderId)
+          if (this.topology === FULLY_CONNECTED) {
+            this.joinSuccess(header.senderId)
+            this.peerNb++
+            this.onJoining(header.senderId)
+          } else if (this.topology === SPRAY) {
+            if (msg.id === header.senderId) {
+              this.joinSuccess(header.senderId)
+              this.peerNb++
+              this.knownPeers.forEach((kp) => { 
+                if (typeof kp !== 'undefined') {
+                  this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS, {id: msg.id})) 
+                } 
+              })
+              this.onJoining(header.senderId)
+            } else {
+              this.joinSuccess(msg.id)
+              this.peerNb++
+              this.onJoining(msg.id)
+              this.knownPeers[this.knownPeers.length] = {peerId: msg.id, peerAge: 0}
+            }
+            
+          }
+
+          
+          // if (this.topology === SPRAY) {
+            // this.knownPeers.forEach((kp) => { 
+              // if (kp != 'undefined') { 
+                // console.log('--------------------------Success kp :', kp, 'myId', this.myId)
+                // console.log('I am', this.myId, 'and I am saying to', kp.peerId, 'to connect with', header.senderId)
+                // console.log(header, msg)
+                // console.log('i send connect _to', header.senderId, 'to :', kp.peerId)
+                // this.channels.forEach((c) => console.log(c))
+                // this.manager.sendTo(kp.peerId, this, msgBld.msg(CONNECT_TO, {id: header.senderId})) 
+              // } 
+            // })
+          // }
           break
         case INIT_CHANNEL_PONG:
           channel.onPong()
@@ -3710,21 +3758,21 @@ class WebChannel {
           }
           break
         case SHUFFLE:
-          console.log()
-          console.log('------ WC: Shuffle ------')
-          console.log('myId', this.myId, 'shuffle', msg)
+          // console.log()
+          // console.log('------ WC: Shuffle ------')
+          // console.log('myId', this.myId, 'shuffle', msg)
           this.manager.onExchange(this, msg.origin, msg.sample)
           break
         case SHUFFLE_ANSWER:
-          console.log()
-          console.log('------ WC: Shuffle answer ------')
-          console.log('myId', this.myId, 'shuffle_anwser', msg)
+          // console.log()
+          // console.log('------ WC: Shuffle answer ------')
+          // console.log('myId', this.myId, 'shuffle_anwser', msg)
           this.manager.onShuffleEnd(this, msg)
           break
         case FORWARD_MESSAGE:
-          console.log('------ I forward ------')
-          console.log('myId:', this.myId)
-          console.log(msg)
+          // console.log('------ I forward ------')
+          // console.log('myId:', this.myId)
+          // console.log(msg)
           if (msg.code === SHUFFLE_ANSWER) {
             if (msg.destId === this.myId) {
               this.manager.onShuffleEnd(this, msg.data)
@@ -3814,7 +3862,6 @@ class WebChannel {
     let jp = this.getJoiningPeer(id)
     jp.channelsToAdd.forEach((c) => {
       this.channels.add(c)
-      // this.knownPeers[this.knownPeers.length] = {peerId: c.peerId, peerAge: 0}
     })
     // TODO: handle channels which should be closed & removed
     this.joiningPeers.delete(jp)
