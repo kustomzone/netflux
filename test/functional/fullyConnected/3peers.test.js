@@ -12,17 +12,22 @@ describe('3 peers -> ', () => {
     // Peer #1
     wc1 = new WebChannel({signaling})//, topology: SPRAY})
     wc1.onMessage = (id, msg) => {
+      console.log('wc1', wc1.myId, id, msg)
       if (id === wc3.myId) {
         expect(msg).toEqual(msg3)
       } else if (id === wc2.myId) {
         expect(msg).toEqual(msg2)
         wc1.send(msg1)
-      } else done.fail()
+      } else {
+        console.log(id, wc1.myId, wc2.myId, wc3.myId)
+        done.fail()
+      }
     }
     wc1.open().then((data) => {
       // Peer #2
       wc2 = new WebChannel({signaling})//, topology: SPRAY})
       wc2.onMessage = (id, msg) => {
+        console.log('wc2', wc2.myId, id, msg)
         if (id === wc3.myId) {
           expect(msg).toEqual(msg3)
           wc2.send(msg2)
@@ -41,14 +46,17 @@ describe('3 peers -> ', () => {
         // Peer #3
         setTimeout(() => {
         wc3 = new WebChannel({signaling})//, topology: SPRAY})
-        // wc3.onMessage = (id, msg) => {
-        //   if (id === wc2.myId) {
-        //     expect(msg).toEqual(msg2)
-        //   } else if (id === wc1.myId) {
-        //     expect(msg).toEqual(msg1)
-        //     done()
-        //   } else done.fail()
-        // }
+        wc3.onMessage = (id, msg) => {
+          console.log('wc3', wc3.myId, id, msg)
+          if (id === wc2.myId) {
+            expect(msg).toEqual(msg2)
+          } else if (id === wc1.myId) {
+            expect(msg).toEqual(msg1)
+            done()
+          } else if (id === wc3.myId) {} else {
+            done.fail()
+          }
+        }
         // console.log('\n------- wc3 joining --------')
         // console.log(wc3)
         wc3.join(data.key)
@@ -60,14 +68,22 @@ describe('3 peers -> ', () => {
 
             // console.log('1')
             // wc4 = new WebChannel({signaling, topology: SPRAY})
-            // // wc4.onMessage = () => {}
+            // wc4.onMessage = () => {}
 
             // wc4.join(data.key)
             //   .then(() => {
+            //     // wc2.manager.updateChannels(wc2)
+            //     // setTimeout(() => {
+            //     //   console.log('wc1: myId', wc1.myId)
+            //     //   console.log('wc2: myId', wc2.myId, wc2.channels)
+            //     //   console.log('wc3: myId', wc3.myId)
+            //     //   console.log('wc4: myId', wc4.myId)
+            //     // }, 500)
 
             //     // console.log('2')
             //     wc5 = new WebChannel({signaling, topology: SPRAY})
             //     // wc5.onMessage = () => {}
+            //     console.log('wc5 joining')
             //     wc5.join(data.key)
             //       .then(() => {
             //         setTimeout(() => {
@@ -76,7 +92,7 @@ describe('3 peers -> ', () => {
             //             wc5.manager.updateChannels(wc5)
             //             wc4.manager.updateChannels(wc4)
             //             console.log('wc3: myId', wc3.myId, 'knownPeers', wc3.knownPeers)
-            //             wc3.manager.updateChannels(wc3)
+            //             // wc3.manager.updateChannels(wc3)
             //             console.log('wc3: myId', wc3.myId, 'knownPeers', wc3.knownPeers)
             //             // wc2.manager.updateChannels(wc2)
             //             wc1.manager.updateChannels(wc1)
@@ -103,11 +119,11 @@ describe('3 peers -> ', () => {
             //     //       .then(() => {
             //     //         console.log('youhou')
             //     //       })
-            //     })
+            //       })
             //   // })
 
               
-            // })
+            //   })
             //   .catch(done.fail)
                 
             // wc3.manager.shuffle(wc3)

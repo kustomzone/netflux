@@ -11,6 +11,7 @@ class SprayService extends WebChannelManagerInterface {
 
 	constructor() {
 		super()
+		this.broadcastedMsg = []
 	}
 
 	add(channel) {
@@ -29,13 +30,30 @@ class SprayService extends WebChannelManagerInterface {
 	    return this.connectWith(wc, channel.peerId, channel.peerId, [...peerIds], [...jpIds])
 	}
 
-	broadcast(webChannel, data) {
-		// actual : broadcast from fully_connected...
-		let d
-	    for (let c of webChannel.channels) {
-	      d = (typeof window === 'undefined') ? data.slice(0) : data
-	      c.send(d)
-	    }
+	broadcast(webChannel, data, message) {
+		let isAlreadyBroadcasted = false
+
+		for (let i = 0 ; i < this.broadcastedMsg.length ; i++) {
+			if (JSON.stringify(this.broadcastedMsg[i].data) === JSON.stringify(message.data)
+				&& this.broadcastedMsg[i].header.code === message.header.code) {
+				isAlreadyBroadcasted = true
+				break
+			}
+		}
+
+		if (!isAlreadyBroadcasted) {
+			let d
+
+			for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
+				for (let c of webChannel.channels) {
+					if (c.peerId === webChannel.knownPeers[i].peerId) {
+				      	d = (typeof window === 'undefined') ? data.slice(0) : data
+				      	c.send(d)
+				      	this.broadcastedMsg[this.broadcastedMsg.length] = message
+				    }
+			    }
+			}
+		}
 	}
 
 	sendTo(id, webChannel, data) {
@@ -119,6 +137,7 @@ class SprayService extends WebChannelManagerInterface {
 		console.log('knownPeers: ', webChannel.knownPeers)
 		console.log('oldest: ', oldest)
 		console.log('sample :', sample)
+		console.log('channels:', webChannel.channels)
 
 		webChannel.sendToPeerForShuffle(oldest.peerId, {origin: webChannel.myId, sample})
 
@@ -232,9 +251,14 @@ class SprayService extends WebChannelManagerInterface {
 			}
 			if (!hasChannel) {
 				// create a new channel
-				console.log('I am trying to connect to', webChannel.knownPeers[i].peerId, '... Please wait.')
+				console.log('I am trying to connect to', webChannel.knownPeers[i].peerId, '... Please wait.', webChannel.myId)
 				// this.connectWith(webChannel, webChannel.knownPeers[i].peerId, null, new Set([webChannel.myId]), new Set())
 				cBlder.connectMeTo(webChannel, webChannel.knownPeers[i].peerId)
+					.then((channel) => {
+						console.log('wouhou !')
+						wc.initChannel(channel, true, id)
+					})
+					.catch((e) => console.log('echec :', e))
 			}
 		}
 

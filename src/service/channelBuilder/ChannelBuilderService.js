@@ -15,12 +15,16 @@ class ChannelBuilderService extends ServiceInterface {
   }
 
   connectMeTo (wc, id) {
+    console.log('connecting', wc.myId, 'with', id)
+
+
     return new Promise((resolve, reject) => {
       this.addPendingRequest(wc, id, {resolve, reject})
       let connectors = [WEBRTC]
       if (typeof window === 'undefined') connectors.push(WEBSOCKET)
       let host = wc.settings.host
       let port = wc.settings.port
+      console.log(this.name, id, {connectors, sender: wc.myId, host, port, oneMsg: true})
       wc.sendSrvMsg(this.name, id, {connectors, sender: wc.myId, host, port, oneMsg: true})
     })
   }

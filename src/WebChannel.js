@@ -102,6 +102,8 @@ const SHUFFLE_ANSWER = 14
 
 const FORWARD_MESSAGE = 15
 
+const BROADCAST = 16
+
 /**
  * Constant used to send a message to the server in order that
  * he can join the webcahnnel
@@ -266,7 +268,13 @@ class WebChannel {
   addChannel (channel) {
     let jp = this.addJoiningPeer(channel.peerId, this.myId, channel)
     // (this.topology() === FULLY_CONNECTED) ? this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
-    this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
+    if (this.topology === FULLY_CONNECTED) {
+      this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
+    } else if (this.topology === SPRAY) {
+      for (let i = 0 ; i < this.knownPeers.length ; i++) {
+        this.manager.sendTo(this.knownPeers[i].peerId, this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
+      }
+    }
     channel.send(msgBld.msg(JOIN_INIT, {
         manager: this.settings.topology,
         wcId: this.id
@@ -277,9 +285,16 @@ class WebChannel {
         channel.send(msgBld.msg(JOIN_FINILIZE))
       })
       .catch((msg) => {
-        this.manager.broadcast(this, msgBld.msg(
-          REMOVE_NEW_MEMBER, {id: channel.peerId})
-        )
+        if (this.topology === FULLY_CONNECTED) {
+          this.manager.broadcast(this, msgBld.msg(REMOVE_NEW_MEMBER, {id: channel.peerId}))
+        } else if (this.topology === SPRAY) {
+          for (let i = 0 ; i < this.knownPeers.length ; i++) {
+            this.manager.sendTo(this.knownPeers[i].peerId, this, msgBld.msg(REMOVE_NEW_MEMBER, {id: channel.peerId}))
+          }
+        }
+        // this.manager.broadcast(this, msgBld.msg(
+        //   REMOVE_NEW_MEMBER, {id: channel.peerId})
+        // )
         this.removeJoiningPeer(jp.id)
       })
   }
@@ -384,7 +399,12 @@ class WebChannel {
    */
   leave () {
     if (this.channels.size !== 0) {
-      this.manager.broadcast(this, msgBld.msg(LEAVE))
+      if (this.topology === FULLY_CONNECTED) {
+        this.manager.broadcast(this, msgBld.msg(LEAVE))
+      } else if (this.topology === SPRAY) {
+        this.manager.broadcast(this, msgBld.msg(BROADCAST, {initialHeader: LEAVE}, {header: {code: LEAVE, senderId: this.myId, recepientId: 0}, data: {}}))
+      }
+      // this.manager.broadcast(this, msgBld.msg(BROADCAST, msgBld.msg(LEAVE)))
       this.topology = this.settings.topology
       // this.channels.forEach((c) => {
       //   c.close()
@@ -402,7 +422,25 @@ class WebChannel {
   send (data) {
     if (this.channels.size !== 0) {
       msgBld.handleUserMessage(data, null, (dataChunk) => {
-        this.manager.broadcast(this, dataChunk)
+        if (this.topology === FULLY_CONNECTED) {
+          this.manager.broadcast(this, dataChunk)
+        } else if (this.topology === SPRAY) {
+          let header = msgBld.readHeader(dataChunk)
+          header.senderId = this.myId
+          msgBld.readUserMessage(this.id, header.senderId, dataChunk, (fullData, isBroadcast) => {
+            this.manager.broadcast(
+              this, 
+              msgBld.msg(
+                BROADCAST, 
+                Object.assign({}, {fullData}, {initialHeader: header})
+              ), 
+              {
+                header: {code: header.code, senderId: this.myId, recepientId: 0}, 
+                data: {fullData, initialHeader: header}
+              })
+          })
+        }
+        // this.manager.broadcast(this, dataChunk)
       })
     }
   }
@@ -462,7 +500,12 @@ class WebChannel {
         this.maxTime = 0
         this.pongNb = 0
         this.pingFinish = (delay) => { resolve(delay) }
-        this.manager.broadcast(this, msgBld.msg(PING))
+        if (this.topology === FULLY_CONNECTED) {
+          this.manager.broadcast(this, msgBld.msg(PING))
+        } else if (this.topology === SPRAY) {
+          this.manager.broadcast(this, msgBld.msg(BROADCAST, {initialHeader: PING}, {header: {code: PING, senderId: this.myId, recepientId: 0}, data: {}}))
+        }
+        // this.manager.broadcast(this, msgBld.msg(PING))
         setTimeout(() => { resolve(PING_TIMEOUT) }, PING_TIMEOUT)
       }
     })
@@ -484,7 +527,7 @@ class WebChannel {
     // console.log('[DEBUG] sendSrvMsg (serviceName, recepient, msg = {}, channel = null) (',
     // serviceName, ', ', recepient, ', ', msg, ', ', channel, ')')
     let fullMsg = msgBld.msg(
-      SERVICE_DATA, {serviceName, data: Object.assign({}, msg)},
+      SERVICE_DATA, {serviceName, data: msg},
       recepient
     )
     if (channel !== null) {
@@ -680,6 +723,17 @@ class WebChannel {
               this.manager.sendTo(msg.destId, this, msgBld.msg(SHUFFLE_ANSWER, msg.data, msg.destId))
             }
           }
+          break
+        case BROADCAST:
+          msgBld.handleUserMessage(msg.fullData, null, (dataChunk) => {
+            msgBld.completeHeader(dataChunk, msg.initialHeader.senderId)
+            this.onChannelMessage(channel, dataChunk)
+          })
+
+          // let messageToMySelf = msgBld.msg(msg.initialHeader.code, msg)
+          // msgBld.completeHeader(messageToMySelf, msg.initialHeader.senderId)
+          // this.onChannelMessage(channel, messageToMySelf)
+          this.manager.broadcast(this, msgBld.msg(BROADCAST, msg), {header: {code: header.code, senderId: header.senderId, recepientId: header.recepientId}, data: msg})
           break
         default:
           throw new Error(`Unknown message type code: "${header.code}"`)
