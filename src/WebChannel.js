@@ -12,10 +12,16 @@ const msgBld = provide(MESSAGE_BUILDER)
 const MAX_ID = 4294967295
 
 /**
- * Timout for ping *WebChannel* in milliseconds.
+ * Timeout for ping *WebChannel* in milliseconds.
  * @type {number}
  */
 const PING_TIMEOUT = 5000
+
+/**
+ * Timeout for the peer to answer when trying to know if it is reachable in milliseconds.
+ * @type {number}
+ */
+const PEER_REACHABLE_TIMEOUT = 1000
 
 /**
  * One of the internal message type. It's a peer message.
@@ -93,16 +99,44 @@ const PONG = 12
 
 /**
  * One of the internal message type. This message is sent when shuffling the known
- * peers in Spray algorithm
+ * peers in Spray algorithm.
  * @type {number}
  */
 const SHUFFLE = 13
 
+/**
+ * One of the internal message type. This message is sent when answering a shuffling
+ * message in Spray algorithm.
+ * @type {number}
+ */
 const SHUFFLE_ANSWER = 14
 
+/**
+ * One of the internal message type. This message is sent when a peer send a message to another
+ * peer which is not in its knownPeers, so that an intermediary peer will forward the message.
+ * @type {number}
+ */
 const FORWARD_MESSAGE = 15
 
+/**
+ * One of the internal message type. This message is sent when broadcasting in the Spray topology.
+ * @type {number}
+ */
 const BROADCAST = 16
+
+/**
+ * One of the internal message type. This message is sent when a peer wants to know if
+ * an other peer is reachable or not in the Spray topology.
+ * @type {number}
+ */
+const IS_PEER_REACHABLE = 17
+
+/**
+ * One of the internal message type. This message is sent when answering a IS_PEER_REACHABLE
+ * message
+ * @type {number}
+ */
+const PEER_REACHABLE = 18
 
 /**
  * Constant used to send a message to the server in order that
@@ -158,7 +192,25 @@ class WebChannel {
      */
     this.channels = new Set()
 
+    /**
+     * Array containing all the knownPeers of this webChannel in the Spray
+     * topology.
+     * @type {array}
+     */ 
     this.knownPeers = []
+
+    /**
+     * Array containing all the message broadcasted by this channel.
+     * @type {array}
+     */
+    this.broadcastedMsg = []
+
+    /**
+     * Array containing all the functions needed to resolve the promises in
+     * isPeerReachable().
+     * @type {array}
+     */
+    this.isPeerReachableArray = []
 
     /**
      * This event handler is used to resolve *Promise* in {@link WebChannel#join}.
@@ -402,7 +454,10 @@ class WebChannel {
       if (this.topology === FULLY_CONNECTED) {
         this.manager.broadcast(this, msgBld.msg(LEAVE))
       } else if (this.topology === SPRAY) {
-        this.manager.broadcast(this, msgBld.msg(BROADCAST, {initialHeader: LEAVE}, {header: {code: LEAVE, senderId: this.myId, recepientId: 0}, data: {}}))
+        this.channels.forEach((c) => {
+          c.close()
+        })
+        // this.manager.broadcast(this, msgBld.msg(BROADCAST, {initialHeader: LEAVE}, {header: {code: LEAVE, senderId: this.myId, recepientId: 0}, data: {}}))
       }
       // this.manager.broadcast(this, msgBld.msg(BROADCAST, msgBld.msg(LEAVE)))
       this.topology = this.settings.topology
@@ -435,7 +490,7 @@ class WebChannel {
                 Object.assign({}, {fullData}, {initialHeader: header})
               ), 
               {
-                header: {code: header.code, senderId: this.myId, recepientId: 0}, 
+                header: {code: BROADCAST, senderId: this.myId, recepientId: 0}, 
                 data: {fullData, initialHeader: header}
               })
           })
@@ -458,6 +513,12 @@ class WebChannel {
     }
   }
 
+  /**
+   * Send the message to a particular peer in the *WebChannel* with
+   * the SHUFFLE code in header.
+   * @param  {number} id - Id of the recipient peer
+   * @param  {} data - Message
+   */
   sendToPeerForShuffle (id, data) {
     if (this.channels.size !== 0) {
       let mes = msgBld.msg(SHUFFLE, data, id)
@@ -465,6 +526,12 @@ class WebChannel {
     }
   }
 
+  /**
+   * Send the message to a particular peer in the *WebChannel* with
+   * the SHUFFLE_ANSWER code in header.
+   * @param  {number} id - Id of the recipient peer
+   * @param  {} data - Message
+   */
   sendToPeerForShuffleAnswer (id, sample) {
     if (this.channels.size !== 0) {
       let mes = msgBld.msg(SHUFFLE_ANSWER, sample, id)
@@ -472,20 +539,65 @@ class WebChannel {
     }
   }
 
+  /**
+   * Send the message to an intermediary peer in the *WebChannel* with
+   * the FORWARD_MESSAGE code in header so that it will forward the message
+   * to the final peer or to an other peer if it doesnt know the final peer.
+   * @param  {int} destId - Id of the final recipient peer
+   * @param  {string|external:ArrayBufferView} data - Message
+   * @param  {int} interId - Id of the intermediary peer that must forward the message
+   */
   forwardMsg(destId, data, interId) {
-    // console.log('forwarded data :', data, 'to', destId, 'by', interId)
+    console.log('forwarded data :', data, 'to', destId, 'by', interId)
     // if the case where wc sends to itself exists, it is a bug
     // if (interId === this.myId) {
     //   this.manager.sendTo(destId, this, data)
     // } else 
     if (this.channels.size !== 0) {
-      let code = msgBld.readHeader(data).code
-      let receivedMsg = msgBld.readInternalMessage(data)
-      let toSend = {data: receivedMsg, code, destId}
-      // console.log(toSend)
-      let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
-      this.manager.sendTo(interId, this, mes)
+      let header = msgBld.readHeader(data)
+      let code = header.code
+      let receivedMsg
+      let toSend
+
+      try {
+        receivedMsg = msgBld.readInternalMessage(data)
+        toSend = {data: receivedMsg, code, destId}
+        let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
+        this.manager.sendTo(interId, this, mes)
+      } catch (e) {
+        msgBld.readUserMessage(this.id, header.senderId, data, (fullData, isBroadcast) => {
+          console.log(fullData)
+          let toSend = {data: fullData, code, destId}
+          // console.log(toSend)
+          let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
+          console.log(this.knownPeers, interId)
+          this.manager.sendTo(interId, this, mes)
+        })
+      }
+      
+      // let toSend = {data: receivedMsg, code, destId}
+      // // console.log(toSend)
+      // let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
+      // this.manager.sendTo(interId, this, mes)
     }
+  }
+
+  /**
+   * Check if the peer with peerId is reachable. If it is, the promise is resolved when
+   * the peer answers to the message, otherwise it rejects.
+   * @param {int} peerId - id of the peer to check
+   * @returns {Promise}
+   */
+  isPeerReachable(peerId) {
+    return new Promise ((resolve, reject) => {
+      try {
+        this.isPeerReachableArray[this.isPeerReachableArray.length] = resolve
+        this.manager.sendTo(peerId, this, msgBld.msg(IS_PEER_REACHABLE, {index: this.isPeerReachableArray.length - 1}))
+        setTimeout(() => reject('PEER_REACHABLE_TIMEOUT reached'), PEER_REACHABLE_TIMEOUT)
+      } catch (e) {
+        reject(e)
+      }
+    })
   }
 
   /**
@@ -503,7 +615,19 @@ class WebChannel {
         if (this.topology === FULLY_CONNECTED) {
           this.manager.broadcast(this, msgBld.msg(PING))
         } else if (this.topology === SPRAY) {
-          this.manager.broadcast(this, msgBld.msg(BROADCAST, {initialHeader: PING}, {header: {code: PING, senderId: this.myId, recepientId: 0}, data: {}}))
+          this.manager.broadcast(this, 
+            msgBld.msg(BROADCAST, 
+              {initialHeader: PING}, 
+              {header: 
+                {
+                  code: PING, 
+                  senderId: this.myId, 
+                  recepientId: 0
+                }, 
+                data: {}
+              }
+            )
+          )
         }
         // this.manager.broadcast(this, msgBld.msg(PING))
         setTimeout(() => { resolve(PING_TIMEOUT) }, PING_TIMEOUT)
@@ -525,7 +649,7 @@ class WebChannel {
    */
   sendSrvMsg (serviceName, recepient, msg = {}, channel = null) {
     // console.log('[DEBUG] sendSrvMsg (serviceName, recepient, msg = {}, channel = null) (',
-    // serviceName, ', ', recepient, ', ', msg, ', ', channel, ')')
+    // serviceName, ', ', recepient, ', ', msg, ', ', channel, ') &&&& myId :', this.myId)
     let fullMsg = msgBld.msg(
       SERVICE_DATA, {serviceName, data: msg},
       recepient
@@ -556,26 +680,29 @@ class WebChannel {
           }
         // If the recepient is a member of webChannel
         } else {
-          if (this.topology === SPRAY) {
-            let isKnownPeer = false
-            for (let i = 0 ; i < this.knownPeers.length ; i++) {
-              if (this.knownPeers[i].peerId === recepient) {
-                isKnownPeer = true
-                break
-              }
-            }
-            if (isKnownPeer) {
-              this.manager.sendTo(recepient, this, fullMsg)
-            } else {
-              this.channels.forEach((c) => {
-                if (c.peerId === recepient) {
-                  c.send(fullMsg)
-                }
-              })
-            }
-          } else if (this.topology === FULLY_CONNECTED) {
+          // if (this.topology === SPRAY) {
+          //   let isKnownPeer = false
+          //   for (let i = 0 ; i < this.knownPeers.length ; i++) {
+          //     if (this.knownPeers[i].peerId === recepient) {
+          //       isKnownPeer = true
+          //       break
+          //     }
+          //   }
+          //   if (isKnownPeer) {
+          //     console.log('isKnownPeer')
+              // console.log(SERVICE_DATA, {serviceName, data: msg}, recepient, msgBld.readHeader(fullMsg))
+          //     this.manager.sendTo(recepient, this, fullMsg)
+          //   } else {
+          //     console.log('isNotKnownPeer')
+          //     this.channels.forEach((c) => {
+          //       if (c.peerId === recepient) {
+          //         c.send(fullMsg)
+          //       }
+          //     })
+          //   }
+          // } else if (this.topology === FULLY_CONNECTED) {
             this.manager.sendTo(recepient, this, fullMsg)
-          }
+          // }
         }
       }
     }
@@ -590,7 +717,7 @@ class WebChannel {
   onChannelMessage (channel, data) {
     let header = msgBld.readHeader(data)
     //console.log('ON CHANNEL MESSAGE:\n - code=' + header.code + '\n - sender=' + header.senderId + '\n - recepient=' + header.recepientId)
-    // console.log('[DEBUG] {onChannelMessage} header: ', header)
+    // console.log('[DEBUG] {onChannelMessage} header: ', header, this.myId)
     if (header.code === USER_DATA) {
       msgBld.readUserMessage(this.id, header.senderId, data, (fullData, isBroadcast) => {
         this.onMessage(header.senderId, fullData, isBroadcast)
@@ -609,7 +736,7 @@ class WebChannel {
           // this.onLeaving(msg.id)
           break
         case SERVICE_DATA:
-          // console.log(msg.data)
+          // console.log('SERVICE_DATA', msg.data)
           if (this.myId === header.recepientId) {
             provide(msg.serviceName, this.settings).onMessage(this, channel, msg.data)
           } else {
@@ -669,20 +796,6 @@ class WebChannel {
             }
             
           }
-
-          
-          // if (this.topology === SPRAY) {
-            // this.knownPeers.forEach((kp) => { 
-              // if (kp != 'undefined') { 
-                // console.log('--------------------------Success kp :', kp, 'myId', this.myId)
-                // console.log('I am', this.myId, 'and I am saying to', kp.peerId, 'to connect with', header.senderId)
-                // console.log(header, msg)
-                // console.log('i send connect _to', header.senderId, 'to :', kp.peerId)
-                // this.channels.forEach((c) => console.log(c))
-                // this.manager.sendTo(kp.peerId, this, msgBld.msg(CONNECT_TO, {id: header.senderId})) 
-              // } 
-            // })
-          // }
           break
         case INIT_CHANNEL_PONG:
           channel.onPong()
@@ -713,14 +826,24 @@ class WebChannel {
           this.manager.onShuffleEnd(this, msg)
           break
         case FORWARD_MESSAGE:
-          // console.log('------ I forward ------')
-          // console.log('myId:', this.myId)
-          // console.log(msg)
+          console.log('------ I forward ------')
+          console.log('myId:', this.myId)
+          console.log(msg)
           if (msg.code === SHUFFLE_ANSWER) {
             if (msg.destId === this.myId) {
               this.manager.onShuffleEnd(this, msg.data)
             } else {
               this.manager.sendTo(msg.destId, this, msgBld.msg(SHUFFLE_ANSWER, msg.data, msg.destId))
+            }
+          } else if (msg.code === USER_DATA) {
+            if (msg.destId !== this.myId) {
+              console.log(this.myId, msg, header)
+              this.sendTo(msg.destId, msg.data)
+            } 
+          } else if (msg.code === SERVICE_DATA) {
+            if (msg.destId !== this.myId) {
+              console.log(this.myId, msg, header)
+              this.manager.sendTo(msg.destId, this, msgBld.msg(SERVICE_DATA, msg.data, msg.destId))
             }
           }
           break
@@ -733,7 +856,25 @@ class WebChannel {
           // let messageToMySelf = msgBld.msg(msg.initialHeader.code, msg)
           // msgBld.completeHeader(messageToMySelf, msg.initialHeader.senderId)
           // this.onChannelMessage(channel, messageToMySelf)
-          this.manager.broadcast(this, msgBld.msg(BROADCAST, msg), {header: {code: header.code, senderId: header.senderId, recepientId: header.recepientId}, data: msg})
+          this.manager.broadcast(
+            this, 
+            msgBld.msg(BROADCAST, msg), 
+            {header: 
+              {
+                code: header.code, 
+                senderId: header.senderId, 
+                recepientId: header.recepientId
+              }, 
+              data: msg
+            }
+          )
+          // console.log(msg, this.myId)
+          break
+        case IS_PEER_REACHABLE:
+          this.manager.sendTo(header.senderId, this, msgBld.msg(PEER_REACHABLE, msg))
+          break
+        case PEER_REACHABLE:
+          this.isPeerReachableArray[msg.index]()
           break
         default:
           throw new Error(`Unknown message type code: "${header.code}"`)

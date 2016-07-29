@@ -1,6 +1,6 @@
 import {signaling} from 'config'
 import {WebChannel} from 'src/WebChannel'
-import {FULLY_CONNECTED, SPRAY} from 'serviceProvider'
+import {FULLY_CONNECTED} from 'serviceProvider'
 
 describe('2 peers -> ', () => {
   it('Should have equal WebChannel structure', (done) => {
