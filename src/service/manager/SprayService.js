@@ -1,5 +1,5 @@
-import {WebChannelManagerInterface} from 'service/webChannelManager/webChannelManager'
-import ChannelBuilderService from 'service/channelBuilder/ChannelBuilderService'
+import ManagerInterface from 'service/manager/ManagerInterface'
+import ChannelBuilderService from 'service/ChannelBuilderService'
 
 // TODO: broadcast: ne traiter que les broadcast non reçus (3 -> 1 -> 2 -> 4 & 5 -> 1, ne pas traiter la deuxieme / troisieme fois au 1)
 // TODO: onPeerDown: fermer les channels avec le peer down
@@ -13,7 +13,7 @@ import ChannelBuilderService from 'service/channelBuilder/ChannelBuilderService'
  *
  * @extends module:webChannelManager~WebChannelManagerInterface
  */
-class SprayService extends WebChannelManagerInterface {
+class SprayService extends ManagerInterface {
 
 	constructor() {
 		super()
@@ -315,7 +315,7 @@ class SprayService extends WebChannelManagerInterface {
 				cBlder.connectMeTo(webChannel, webChannel.knownPeers[i].peerId)
 					.then((channel) => {
 						console.log('wouhou !')
-						wc.initChannel(channel, true, id)
+						webChannel.initChannel(channel, true, webChannel.knownPeers[i].peerId)
 					})
 					.catch((e) => console.log('echec :', e))
 			}

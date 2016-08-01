@@ -38,7 +38,7 @@ class ServiceInterface {
 
   constructor () {
     if (!pendingRequests.has(this.name)) {
-      pendingRequests.set(this.name, new WeakMap())
+      pendingRequests.set(this.name, new Map())
     }
   }
 
@@ -83,7 +83,4 @@ class ServiceInterface {
   }
 }
 
-export {
-  /** @see module:service~ServiceInterface */
-  ServiceInterface
-}
+export default ServiceInterface

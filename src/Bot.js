@@ -1,4 +1,5 @@
-import {WebChannel} from 'WebChannel'
+import {isBrowser} from 'helper'
+import WebChannel from 'WebChannel'
 import {CHANNEL_BUILDER, provide} from 'serviceProvider'
 
 const ADD_BOT_SERVER = 'addBotServer'
@@ -6,7 +7,7 @@ const NEW_CHANNEL = 'newChannel'
 
 class Bot {
   constructor (options = {}) {
-    if (typeof window !== 'undefined') throw new Error('Bot can be instanciate only in Node\'s environment')
+    if (isBrowser()) throw new Error('Bot can be instanciated only in Node\'s environment')
     this.defaults = {
       host: '127.0.0.1',
       port: 9000,
@@ -52,7 +53,7 @@ class Bot {
         resolve()
       })
 
-      this.server.on('error', (err) =>  {
+      this.server.on('error', () => {
         reject('WebSocketServerError with ws://' + this.settings.host + ':' + this.settings.port)
       })
 
@@ -66,13 +67,13 @@ class Bot {
           } catch (e) {}
           switch (data.code) {
             case ADD_BOT_SERVER:
-            this.addBotServer(socket, data)
-            break
+              this.addBotServer(socket, data)
+              break
             case NEW_CHANNEL:
-            this.newChannel(socket, data)
-            break
+              this.newChannel(socket, data)
+              break
             default:
-            this.onCodeError()
+              this.onCodeError()
           }
         })
       })
@@ -139,4 +140,4 @@ class Bot {
   }
 }
 
-export { Bot }
+export default Bot

@@ -77,13 +77,15 @@ const JOIN_FINILIZE = 7
  */
 const JOIN_SUCCESS = 8
 
-/**
- * One of the internal message type. This message is sent during Initialization
- * of a channel.
- * @see {@link WebChannel#initChannel}
- * @type {number}
- */
-const INIT_CHANNEL_PONG = 10
+// /**
+//  * One of the internal message type. This message is sent during Initialization
+//  * of a channel.
+//  * @see {@link WebChannel#initChannel}
+//  * @type {number}
+//  */
+// const INIT_CHANNEL_PONG = 10
+
+const INIT_OK = 10
 
 /**
  * One of the internal message type. Ping message.
@@ -177,7 +179,7 @@ class WebChannel {
     this.defaults = {
       connector: WEBRTC,
       topology: FULLY_CONNECTED,
-      signaling: 'ws://sigver-coastteam.rhcloud.com:8000'
+      signaling: 'wss://sigver-coastteam.rhcloud.com:8443'
     }
     this.settings = Object.assign({}, this.defaults, options)
 
@@ -306,9 +308,9 @@ class WebChannel {
   open (options = {}) {
     let settings = Object.assign({}, this.settings, options)
     return this.gate.open((channel) => {
-      this.initChannel(channel, false)
+      this.initChannel(channel)
         .then((channel) => this.addChannel(channel))
-    }, settings.signaling)
+    }, settings)
   }
 
   /**
@@ -328,10 +330,9 @@ class WebChannel {
       }
     }
     channel.send(msgBld.msg(JOIN_INIT, {
-        manager: this.settings.topology,
-        wcId: this.id
-      }, channel.peerId)
-    )
+      manager: this.settings.topology,
+      wcId: this.id
+    }, channel.peerId))
     return this.manager.add(channel)
       .then(() => {
         channel.send(msgBld.msg(JOIN_FINILIZE))
@@ -368,11 +369,9 @@ class WebChannel {
           that he can join initiate the channel
         */
         socket.send(JSON.stringify({code: ADD_BOT_SERVER, sender: this.myId, wcId: this.id}))
-        this.initChannel(socket, false).then((channel) => {
-          this.addChannel(channel).then(() => {
-            resolve()
-          })
-        })
+        this.initChannel(socket)
+          .then((channel) => this.addChannel(channel))
+          .then(() => resolve())
       }).catch((reason) => {
         reject(reason)
       })
@@ -391,7 +390,7 @@ class WebChannel {
   joinAsBot (channel, id) {
     return new Promise((resolve, reject) => {
       this.onJoin = () => resolve(this)
-      this.initChannel(channel, true, id)// .then((channel) => {
+      this.initChannel(channel, id)// .then((channel) => {
         // console.log('[DEBUG] Resolved initChannel by server')
       // })
     })
@@ -421,7 +420,7 @@ class WebChannel {
    * or null is the *WebChannel* is closed
    */
   getAccess () {
-    return this.gate.getAccessData()
+    return this.gate.accessData
   }
 
   /**
@@ -439,8 +438,9 @@ class WebChannel {
       webSocketService.connect(settings.signaling)
         .then((ws) => {
           ws.onclose = (closeEvt) => reject(closeEvt.reason)
+          ws.onerror = (error) => reject(error.reason)
           return webRTCService.connectOverSignaling(ws, key)
-            .then((channel) => this.initChannel(channel, true))
+            .then((channel) => this.initChannel(channel))
         })
         .catch(reject)
     })
@@ -716,8 +716,8 @@ class WebChannel {
    */
   onChannelMessage (channel, data) {
     let header = msgBld.readHeader(data)
-    //console.log('ON CHANNEL MESSAGE:\n - code=' + header.code + '\n - sender=' + header.senderId + '\n - recepient=' + header.recepientId)
-    // console.log('[DEBUG] {onChannelMessage} header: ', header, this.myId)
+    // console.log('ON CHANNEL MESSAGE:\n - code=' + header.code + '\n - sender=' + header.senderId + '\n - recepient=' + header.recepientId)
+    // console.log('[DEBUG] {onChannelMessage} header: ', header)
     if (header.code === USER_DATA) {
       msgBld.readUserMessage(this.id, header.senderId, data, (fullData, isBroadcast) => {
         this.onMessage(header.senderId, fullData, isBroadcast)
@@ -797,9 +797,13 @@ class WebChannel {
             
           }
           break
-        case INIT_CHANNEL_PONG:
-          channel.onPong()
-          delete channel.onPong
+        // case INIT_CHANNEL_PONG:
+        //   channel.onPong()
+        //   delete channel.onPong
+        //   break
+        case INIT_OK:
+          channel.onOk()
+          delete channel.onOk
           break
         case PING:
           this.manager.sendTo(header.senderId, this, msgBld.msg(PONG))
@@ -919,29 +923,23 @@ class WebChannel {
    * @private
    * @param {external:WebSocket|external:RTCDataChannel} ch - Channel to
    * initialize
-   * @param {boolean} isInitiator - Equals to true if this peer is an initiator
-   * in the channel establishment, false otherwise
    * @param {number} [id] - Assign an id to this channel. It would be generated
    * if not provided
    * @returns {Promise} - Resolved once the channel is initialized on both sides
    */
-  initChannel (ch, isInitiator, id = -1) {
-    // console.log('[DEBUG] initChannel (ch, isInitiator, id) (ch, ', isInitiator, ', ', id, ')')
+  initChannel (ch, id = -1) {
     return new Promise((resolve, reject) => {
       if (id === -1) { id = this.generateId() }
       let channel = new Channel(ch, this, id)
       // TODO: treat the case when the 'ping' or 'pong' message has not been received
-      if (isInitiator) {
-        channel.config()
-        channel.onPong = () => resolve(channel)
-        ch.send('ping')
-      } else {
-        ch.onmessage = (msgEvt) => {
-          if (msgEvt.data === 'ping') {
-            channel.config()
-            channel.send(msgBld.msg(INIT_CHANNEL_PONG))
-            resolve(channel)
-          }
+      channel.config()
+      channel.onOk = () => resolve(channel)
+      ch.send('ok')
+      ch.onmessage = (msgEvt) => {
+        if (msgEvt.data === 'ok') {
+          channel.config()
+          channel.send(msgBld.msg(INIT_OK))
+          resolve(channel)
         }
       }
     })
@@ -1096,4 +1094,4 @@ class WebChannel {
   }
 }
 
-export {WebChannel}
+export default WebChannel

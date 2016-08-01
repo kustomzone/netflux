@@ -1,21 +1,6 @@
-import {signaling} from 'config'
-import WebRTCService from 'src/service/channelBuilder/WebRTCService'
-import WebSocketService from 'src/service/channelBuilder/WebSocketService'
-
-// const signaling = 'ws://sigver-coastteam.rhcloud.com:8000'
-
-function randKey () {
-  const MIN_LENGTH = 5
-  const DELTA_LENGTH = 0
-  const MASK = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-  let result = ''
-  const length = MIN_LENGTH + Math.round(Math.random() * DELTA_LENGTH)
-
-  for (let i = 0; i < length; i++) {
-    result += MASK[Math.round(Math.random() * (MASK.length - 1))]
-  }
-  return result
-}
+import {signaling, randKey} from 'config'
+import WebRTCService from 'src/service/WebRTCService'
+import WebSocketService from 'src/service/WebSocketService'
 
 describe('WebRTCService ->', () => {
   let webRTCService = new WebRTCService()

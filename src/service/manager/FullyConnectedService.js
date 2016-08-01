@@ -1,4 +1,5 @@
-import {WebChannelManagerInterface} from 'service/webChannelManager/webChannelManager'
+import {isBrowser} from 'helper'
+import ManagerInterface from 'service/manager/ManagerInterface'
 
 /**
  * Fully connected web channel manager. Implements fully connected topology
@@ -6,7 +7,7 @@ import {WebChannelManagerInterface} from 'service/webChannelManager/webChannelMa
  *
  * @extends module:webChannelManager~WebChannelManagerInterface
  */
-class FullyConnectedService extends WebChannelManagerInterface {
+class FullyConnectedService extends ManagerInterface {
 
   constructor () {
     super()
@@ -28,7 +29,7 @@ class FullyConnectedService extends WebChannelManagerInterface {
   broadcast (webChannel, data) {
     let d
     for (let c of webChannel.channels) {
-      d = (typeof window === 'undefined') ? data.slice(0) : data
+      d = !isBrowser() ? data.slice(0) : data
       c.send(d)
     }
   }

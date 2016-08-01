@@ -1122,7 +1122,7 @@
 
 	  constructor () {
 	    if (!pendingRequests.has(this.name)) {
-	      pendingRequests.set(this.name, new WeakMap())
+	      pendingRequests.set(this.name, new Map())
 	    }
 	  }
 
@@ -1197,7 +1197,7 @@
 	 * @interface
 	 * @extends module:service~ServiceInterface
 	 */
-	class WebChannelManagerInterface extends ServiceInterface {
+	class ManagerInterface extends ServiceInterface {
 
 	  constructor () {
 	    super()
@@ -1226,9 +1226,6 @@
 	          let cBuilder = provide(CHANNEL_BUILDER)
 	          msg.peerIds.forEach((id) => {
 	            cBuilder.connectMeTo(wc, id)
-	              .then((channel) => {
-	                return wc.initChannel(channel, true, id)
-	              })
 	              .then((channel) => {
 	                // console.log('PEER ' + wc.myId + ' CONNECTED TO ' + channel.peerId)
 	                counter++
@@ -1395,58 +1392,403 @@
 	  }
 	}
 
-	/**
-	 * Fully connected web channel manager. Implements fully connected topology
-	 * network, when each peer is connected to each other.
-	 *
-	 * @extends module:webChannelManager~WebChannelManagerInterface
-	 */
-	class FullyConnectedService extends WebChannelManagerInterface {
-
-	  constructor () {
-	    super()
+	function isBrowser () {
+	  if (typeof window === 'undefined' || (typeof process !== 'undefined' && process.title === 'node')) {
+	    return false
 	  }
-
-	  add (channel) {
-	    let wc = channel.webChannel
-	    let peerIds = new Set([wc.myId])
-	    let jpIds = new Set()
-	    wc.channels.forEach((c) => peerIds.add(c.peerId))
-	    wc.getJoiningPeers().forEach((jp) => {
-	      if (channel.peerId !== jp.id && !peerIds.has(jp.id)) {
-	        jpIds.add(jp.id)
-	      }
-	    })
-	    return this.connectWith(wc, channel.peerId, channel.peerId, [...peerIds], [...jpIds])
-	  }
-
-	  broadcast (webChannel, data) {
-	    let d
-	    for (let c of webChannel.channels) {
-	      d = (typeof window === 'undefined') ? data.slice(0) : data
-	      c.send(d)
-	    }
-	  }
-
-	  sendTo (id, webChannel, data) {
-	    for (let c of webChannel.channels) {
-	      if (c.peerId === id) {
-	        c.send(data)
-	        return
-	      }
-	    }
-	  }
-
-	  leave (webChannel) {}
+	  return true
 	}
 
-	const NEW_CHANNEL$1 = 'newChannel'
+	const message = new WeakMap()
+
+	class CloseEvent {
+	  constructor (msg) {
+	    message.set(this, msg)
+	  }
+
+	  get message () {
+	    return message.get(this)
+	  }
+	}
+
+	const CONNECT_TIMEOUT = 2000
+	const connectionsByWC = new Map()
+	let RTCPendingConnections;
+	let src;
+	let availableService = true
+	if (isBrowser()) src = window
+	else {
+	  try {
+	    src = require('wrtc')
+	  } catch (err) {
+	    availableService = false
+	  }
+	}
+	const RTCPeerConnection$1 = src.RTCPeerConnection
+	const RTCIceCandidate$1 = src.RTCIceCandidate
+
+	/**
+	 * Ice candidate event handler.
+	 *
+	 * @callback WebRTCService~onCandidate
+	 * @param {external:RTCPeerConnectionIceEvent} evt - Event.
+	 */
+
+	/**
+	 * Session description event handler.
+	 *
+	 * @callback WebRTCService~onSDP
+	 * @param {external:RTCPeerConnectionIceEvent} evt - Event.
+	 */
+
+	/**
+	 * Data channel event handler.
+	 *
+	 * @callback WebRTCService~onChannel
+	 * @param {external:RTCPeerConnectionIceEvent} evt - Event.
+	 */
+
+	/**
+	 * Service class responsible to establish connections between peers via
+	 * `RTCDataChannel`.
+	 *
+	 * @see {@link external:RTCPeerConnection}
+	 * @extends module:channelBuilder~ChannelBuilderInterface
+	 */
+	class WebRTCService extends ServiceInterface {
+
+	  static isAvailabled () {
+	    return availableService
+	  }
+
+	  /**
+	   * WebRTCService constructor.
+	   *
+	   * @param  {Object} [options] - This service options.
+	   * @param  {Object} [options.signaling='ws://sigver-coastteam.rhcloud.com:8000'] -
+	   * Signaling server URL.
+	   * @param  {Object[]} [options.iceServers=[{urls: 'stun:23.21.150.121'},{urls: 'stun:stun.l.google.com:19302'},{urls: 'turn:numb.viagenie.ca', credential: 'webrtcdemo', username: 'louis%40mozilla.com'}]] - WebRTC options to setup which STUN
+	   * and TURN servers to be used.
+	   */
+	  constructor (options = {}) {
+	    super()
+	    this.defaults = {
+	      signaling: 'ws://sigver-coastteam.rhcloud.com:8000',
+	      iceServers: [
+	        {urls: 'stun:turn01.uswest.xirsys.com'}
+	      ]
+	    }
+	    this.settings = Object.assign({}, this.defaults, options)
+	  }
+
+	  onMessage (wc, ch, msg) {
+	    let connections = this.getPendingConnections(wc)
+	    connections.add(msg.sender)
+	    if ('offer' in msg) {
+	      this.createPeerConnectionAndAnswer(
+	        (candidate) => wc.sendSrvMsg(this.name, msg.sender,
+	          {sender: wc.myId, candidate}),
+	        (answer) => wc.sendSrvMsg(this.name, msg.sender,
+	          {sender: wc.myId, answer}),
+	        (channel) => {
+	          let channelBuilderService = provide(CHANNEL_BUILDER)
+	          channelBuilderService.onChannel(wc, channel, true, msg.sender)
+	          connections.remove(channel.peerId)
+	        },
+	        msg.offer
+	      ).then((pc) => {
+	        connections.setPC(msg.sender, pc)
+	      })
+	    } if ('answer' in msg) {
+	      connections.getPC(msg.sender)
+	        .setRemoteDescription(msg.answer)
+	        .catch((err) => console.error(`Set answer: ${err.message}`))
+	    } else if ('candidate' in msg) {
+	      connections.addIceCandidate(msg.sender, new RTCIceCandidate$1(msg.candidate))
+	        .catch((err) => { console.error(`Add ICE candidate: ${err.message}`) })
+	    }
+	  }
+
+	  // Equivalent connectMeTo(wc, id)
+	  connectOverWebChannel (wc, id) {
+	    return new Promise((resolve, reject) => {
+	      let sender = wc.myId
+	      let connections = this.getPendingConnections(wc)
+	      connections.add(id)
+	      this.createPeerConnectionAndOffer(
+	        (candidate) => wc.sendSrvMsg(this.name, id, {sender, candidate}),
+	        (offer) => wc.sendSrvMsg(this.name, id, {sender, offer}),
+	        (channel) => {
+	          connections.remove(id)
+	          resolve(channel)
+	        }
+	      ).then((pc) => connections.setPC(id, pc))
+	      setTimeout(reject, CONNECT_TIMEOUT, 'connectMeTo timeout')
+	    })
+	  }
+
+	  // Equivalent à open
+	  listenFromSignaling (ws, onChannel) {
+	    let connections = new RTCPendingConnections()
+
+	    ws.onmessage = (evt) => {
+	      let msg = JSON.parse(evt.data)
+	      if (!('id' in msg) || !('data' in msg)) {
+	        console.error('Unknown message from the signaling server: ', evt.data)
+	        ws.close()
+	        return
+	      }
+	      connections.add(msg.id)
+	      if ('offer' in msg.data) {
+	        this.createPeerConnectionAndAnswer(
+	            (candidate) => ws.send(JSON.stringify({id: msg.id, data: {candidate}})),
+	            (answer) => ws.send(JSON.stringify({id: msg.id, data: {answer}})),
+	            onChannel,
+	            msg.data.offer
+	          ).then((pc) => connections.setPC(msg.id, pc))
+	          .catch((err) => {
+	            console.error(`Answer generation failed: ${err.message}`)
+	          })
+	      } else if ('candidate' in msg.data) {
+	        connections.addIceCandidate(msg.id, new RTCIceCandidate$1(msg.data.candidate))
+	          .catch((err) => {
+	            console.error(`Adding ice candidate failed: ${err.message}`)
+	          })
+	      }
+	    }
+	  }
+
+	  connectOverSignaling (ws, key, options = {}) {
+	    return new Promise((resolve, reject) => {
+	      let pc
+
+	      ws.onmessage = (evt) => {
+	        try {
+	          let msg = JSON.parse(evt.data)
+	          // Check message format
+	          if (!('data' in msg)) {
+	            reject(`Unknown message from the signaling server: ${evt.data}`)
+	          }
+
+	          if ('answer' in msg.data) {
+	            pc.setRemoteDescription(msg.data.answer)
+	              .catch((err) => {
+	                console.error(`Set answer: ${err.message}`)
+	                reject(err)
+	              })
+	          } else if ('candidate' in msg.data) {
+	            pc.addIceCandidate(new RTCIceCandidate$1(msg.data.candidate))
+	              .catch((evt) => {
+	                // This exception does not reject the current Promise, because
+	                // still the connection may be established even without one or
+	                // several candidates
+	                console.error(`Add ICE candidate: ${evt.message}`)
+	              })
+	          } else {
+	            reject(`Unknown message from the signaling server: ${evt.data}`)
+	          }
+	        } catch (err) {
+	          console.log('CATCH: ', err.message)
+	          reject(err.message)
+	        }
+	      }
+	      this.createPeerConnectionAndOffer(
+	          (candidate) => {
+	            if (ws.readyState === 1) ws.send(JSON.stringify({data: {candidate}}))
+	          },
+	          (offer) => ws.send(JSON.stringify({join: key, data: {offer}})),
+	          resolve
+	        )
+	        .then((peerConnection) => { pc = peerConnection })
+	        .catch(reject)
+	    })
+	  }
+
+	  /**
+	   * Creates a peer connection and generates an SDP offer.
+	   *
+	   * @param  {WebRTCService~onCandidate} onCandidate - Ice candidate event handler.
+	   * @param  {WebRTCService~onSDP} sendOffer - Session description event handler.
+	   * @param  {WebRTCService~onChannel} onChannel - Handler event when the data channel is ready.
+	   * @return {Promise} - Resolved when the offer has been succesfully created,
+	   * set as local description and sent to the peer.
+	   */
+	  createPeerConnectionAndOffer (onCandidate, sendOffer, onChannel) {
+	    let pc = this.createPeerConnection(onCandidate)
+	    let dc = pc.createDataChannel(null)
+	    pc.oniceconnectionstatechange = () => {
+	      if (pc.iceConnectionState === 'disconnected') {
+	        if (typeof window !== 'undefined') {
+	          dc.onclose(new CloseEvent(pc.iceConnectionState))
+	        }
+	      }
+	    }
+	    dc.onopen = (evt) => onChannel(dc)
+	    return pc.createOffer()
+	      .then((offer) => pc.setLocalDescription(offer))
+	      .then(() => {
+	        let description = JSON.parse(JSON.stringify(pc.localDescription))
+	        // sendOffer(pc.localDescription.toJSON())
+	        sendOffer(description)
+	        return pc
+	      })
+	  }
+
+	  /**
+	   * Creates a peer connection and generates an SDP answer.
+	   *
+	   * @param  {WebRTCService~onCandidate} onCandidate - Ice candidate event handler.
+	   * @param  {WebRTCService~onSDP} sendOffer - Session description event handler.
+	   * @param  {WebRTCService~onChannel} onChannel - Handler event when the data channel is ready.
+	   * @param  {Object} offer - Offer received from a peer.
+	   * @return {Promise} - Resolved when the offer has been succesfully created,
+	   * set as local description and sent to the peer.
+	   */
+	  createPeerConnectionAndAnswer (onCandidate, sendAnswer, onChannel, offer) {
+	    let pc = this.createPeerConnection(onCandidate)
+	    pc.ondatachannel = (dcEvt) => {
+	      let dc = dcEvt.channel
+	      pc.oniceconnectionstatechange = () => {
+	        if (pc.iceConnectionState === 'disconnected') {
+	          if (typeof window !== 'undefined') {
+	            dc.onclose(new CloseEvent(pc.iceConnectionState))
+	          }
+	        }
+	      }
+	      dc.onopen = (evt) => onChannel(dc)
+	    }
+	    return pc.setRemoteDescription(offer)
+	      .then(() => pc.createAnswer())
+	      .then((answer) => pc.setLocalDescription(answer))
+	      .then(() => {
+	        // sendAnswer(pc.localDescription.toJSON())
+	        let description = JSON.parse(JSON.stringify(pc.localDescription))
+	        sendAnswer(description)
+	        return pc
+	      })
+	      .catch((err) => {
+	        console.error(`Set offer & generate answer: ${err.message}`)
+	      })
+	  }
+
+	  /**
+	   * Creates an instance of `RTCPeerConnection` and sets `onicecandidate` event handler.
+	   *
+	   * @private
+	   * @param  {WebRTCService~onCandidate} onCandidate - Ice
+	   * candidate event handler.
+	   * @return {external:RTCPeerConnection} - Peer connection.
+	   */
+	  createPeerConnection (onCandidate) {
+	    let pc = new RTCPeerConnection$1({iceServers: this.settings.iceServers})
+	    pc.onicecandidate = (evt) => {
+	      if (evt.candidate !== null) {
+	        let candidate = {
+	          candidate: evt.candidate.candidate,
+	          sdpMid: evt.candidate.sdpMid,
+	          sdpMLineIndex: evt.candidate.sdpMLineIndex
+	        }
+	        onCandidate(candidate)
+	      }
+	    }
+	    return pc
+	  }
+
+	  getPendingConnections (wc) {
+	    if (connectionsByWC.has(wc.id)) {
+	      return connectionsByWC.get(wc.id)
+	    } else {
+	      let connections = new RTCPendingConnections()
+	      connectionsByWC.set(wc.id, connections)
+	      return connections
+	    }
+	  }
+	}
+
+	/**
+	 * The goal of this class is to prevent the error when adding an ice candidate
+	 * before the remote description has been set.
+	 */
+	RTCPendingConnections = class RTCPendingConnections {
+	  constructor () {
+	    this.connections = new Map()
+	  }
+
+	  /**
+	   * Prepares pending connection for the specified peer only if it has not been added already.
+	   *
+	   * @param  {string} id - Peer id
+	   */
+	  add (id) {
+	    if (!this.connections.has(id)) {
+	      let pc = null
+	      let obj = {promise: null}
+	      obj.promise = new Promise((resolve, reject) => {
+	        Object.defineProperty(obj, 'pc', {
+	          get: () => pc,
+	          set: (value) => {
+	            pc = value
+	            resolve()
+	          }
+	        })
+	        setTimeout(reject, CONNECT_TIMEOUT, 'timeout')
+	      })
+	      this.connections.set(id, obj)
+	    }
+	  }
+
+	  /**
+	   * Remove a pending connection from the Map. Usually when the connection has already
+	   * been established and there is now interest to hold this reference.
+	   *
+	   * @param  {string} id - Peer id.
+	   */
+	  remove (id) {
+	    this.connections.delete(id)
+	  }
+
+	  /**
+	   * Returns RTCPeerConnection object for the provided peer id.
+	   *
+	   * @param  {string} id - Peer id.
+	   * @return {external:RTCPeerConnection} - Peer connection.
+	   */
+	  getPC (id) {
+	    return this.connections.get(id).pc
+	  }
+
+	  /**
+	   * Updates RTCPeerConnection reference for the provided peer id.
+	   *
+	   * @param  {string} id - Peer id.
+	   * @param  {external:RTCPeerConnection} pc - Peer connection.
+	   */
+	  setPC (id, pc) {
+	    this.connections.get(id).pc = pc
+	  }
+
+	  /**
+	   * When the remote description is set, it will add the ice candidate to the
+	   * peer connection of the specified peer.
+	   *
+	   * @param  {string} id - Peer id.
+	   * @param  {external:RTCIceCandidate} candidate - Ice candidate.
+	   * @return {Promise} - Resolved once the ice candidate has been succesfully added.
+	   */
+	  addIceCandidate (id, candidate) {
+	    let obj = this.connections.get(id)
+	    return obj.promise.then(() => {
+	      return obj.pc.addIceCandidate(candidate)
+	    })
+	  }
+	}
+
+	const NEW_CHANNEL = 'newChannel'
 
 	class ChannelBuilderService extends ServiceInterface {
 	  constructor (options = {}) {
 	    super()
 	    this.default = {
-	      connectors: [WEBRTC],
 	      host: '',
 	      port: 0
 	    }
@@ -1459,18 +1801,30 @@
 
 	    return new Promise((resolve, reject) => {
 	      this.addPendingRequest(wc, id, {resolve, reject})
-	      let connectors = [WEBRTC]
-	      if (typeof window === 'undefined') connectors.push(WEBSOCKET)
-	      let host = wc.settings.host
-	      let port = wc.settings.port
-	      console.log(this.name, id, {connectors, sender: wc.myId, host, port, oneMsg: true})
+	      let data = this.availableConnectors(wc)
+	      let connectors = data.connectors
+	      let host = data.host
+	      let port = data.port
 	      wc.sendSrvMsg(this.name, id, {connectors, sender: wc.myId, host, port, oneMsg: true})
 	    })
 	  }
 
+	  availableConnectors (wc) {
+	    let data = {}
+	    let connectors = []
+	    if (WebRTCService.isAvailabled()) connectors.push(WEBRTC)
+	    let host = wc.settings.host
+	    let port = wc.settings.port
+	    if (!isBrowser() && host !== undefined && port !== undefined) connectors.push(WEBSOCKET)
+	    data = {connectors, host, port}
+	    return data
+	  }
+
 	  onChannel (wc, channel, oneMsg, sender) {
-	    if (!oneMsg) wc.initChannel(channel, false, sender)
-	    else this.getPendingRequest(wc, sender).resolve(channel)
+	    wc.initChannel(channel, sender)
+	      .then((channel) => {
+	        if (oneMsg) this.getPendingRequest(wc, sender).resolve(channel)
+	      })
 	  }
 
 	  onMessage (wc, channel, msg) {
@@ -1478,16 +1832,14 @@
 	    let host = msg.host
 	    let port = msg.port
 	    let settings = Object.assign({}, wc.settings, {host, port})
-
 	    if (availabled.indexOf(WEBSOCKET) > -1) {
 	      // A Bot server send the message
 	      let cBuilder = provide(WEBSOCKET, settings)
-
 	      let url = 'ws://' + host + ':' + port
 	      // Try to connect in WebSocket
 	      cBuilder.connect(url)
 	        .then((channel) => {
-	          channel.send(JSON.stringify({code: NEW_CHANNEL$1, sender: wc.myId,
+	          channel.send(JSON.stringify({code: NEW_CHANNEL, sender: wc.myId,
 	            wcId: wc.id, oneMsg: msg.oneMsg}))
 	          this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
 	        })
@@ -1498,19 +1850,21 @@
 	              this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
 	            })
 	        })
-	    } else if (typeof window !== 'undefined') {
-	      // The peer who send the message isn't a bot and i'm not a bot too
-	      let cBuilder = provide(WEBRTC)
-	      cBuilder.connectOverWebChannel(wc, msg.sender)
-	        .then((channel) => {
-	          this.onChannel(wc, channel, !msg.oneMsg, msg.sender)
-	        })
 	    } else {
-	      // The peer who send the message isn't a bot and i'm bot
-	      host = wc.settings.host
-	      port = wc.settings.port
-	      wc.sendSrvMsg(this.name, msg.sender, {connectors: [WEBRTC, WEBSOCKET],
-	        sender: wc.myId, host, port, oneMsg: false})
+	      let data = this.availableConnectors(wc)
+	      let connectors = data.connectors
+	      let host = data.host
+	      let port = data.port
+	      if (connectors.indexOf(WEBSOCKET) > -1) {
+	        // The peer who send the message doesn't listen in WebSocket and i'm bot
+	        wc.sendSrvMsg(this.name, msg.sender, {connectors: [WEBRTC, WEBSOCKET],
+	          sender: wc.myId, host, port, oneMsg: false})
+	      } else {
+	        // The peer who send the message doesn't listen in WebSocket and doesn't listen too
+	        let cBuilder = provide(WEBRTC)
+	        cBuilder.connectOverWebChannel(wc, msg.sender)
+	          .then((channel) => this.onChannel(wc, channel, !msg.oneMsg, msg.sender))
+	      }
 	    }
 	  }
 	}
@@ -1527,7 +1881,7 @@
 	 *
 	 * @extends module:webChannelManager~WebChannelManagerInterface
 	 */
-	class SprayService extends WebChannelManagerInterface {
+	class SprayService extends ManagerInterface {
 
 		constructor() {
 			super()
@@ -1829,7 +2183,7 @@
 					cBlder.connectMeTo(webChannel, webChannel.knownPeers[i].peerId)
 						.then((channel) => {
 							console.log('wouhou !')
-							wc.initChannel(channel, true, id)
+							webChannel.initChannel(channel, true, webChannel.knownPeers[i].peerId)
 						})
 						.catch((e) => console.log('echec :', e))
 				}
@@ -1898,467 +2252,57 @@
 	}
 
 	/**
-	 * Channel Builder module is responsible to create a connection between two
-	 * peers.
-	 * @module channelBuilder
-	 * @see Channel
-	 */
-
-	/**
-	 * On channel callback for {@link module:channelBuilder~ChannelBuilderInterface#open}
-	 * function.
+	 * Fully connected web channel manager. Implements fully connected topology
+	 * network, when each peer is connected to each other.
 	 *
-	 * @callback module:channelBuilder~onChannelCallback
-	 * @param {Channel} channel - A new channel.
+	 * @extends module:webChannelManager~WebChannelManagerInterface
 	 */
-
-	/**
-	 * Call back to initialize the channel. It should be executed on both peer
-	 * sides during connection establishment to assure that both channels would be
-	 * ready to be used in the web channel.
-	 *
-	 * @callback module:channelBuilder~initChannel
-	 * @param {Channel} ch - Channel.
-	 * @param {string} id - Unique channel identifier.
-	 */
-
-	/**
-	 * Interface to be implemented by each connection service.
-	 *
-	 * @interface
-	 * @extends module:service~ServiceInterface
-	 */
-	class ChannelBuilderInterface extends ServiceInterface {
+	class FullyConnectedService extends ManagerInterface {
 
 	  constructor () {
 	    super()
 	  }
 
-	  /**
-	   * Enables other clients to establish a connection with you.
-	   *
-	   * @abstract
-	   * @param {string} key - The unique identifier which has to be passed to the
-	   * peers who need to connect to you.
-	   * @param {module:channelBuilder~ChannelBuilderInterface~onChannelCallback} onChannel - Callback
-	   * function to execute once the connection has been established.
-	   * @param {Object} [options] - Any other options which depend on the service implementation.
-	   * @return {Promise} - Once resolved, provide an Object with `key` and `url`
-	   * attributes to be passed to {@link module:channelBuilder~ChannelBuilderInterface#join} function.
-	   * It is rejected if an error occured.
-	   */
-	  open (key, onChannel, options) {
-	    throw new Error('Must be implemented by subclass!')
-	  }
-
-	  /**
-	   * Connects you with the peer who provided the `key`.
-	   *
-	   * @abstract
-	   * @param  {string} key - A key obtained from the peer who executed
-	   * {@link module:channelBuilder~ChannelBuilderInterface#open} function.
-	   * @param  {Object} [options] Any other options which depend on the implementation.
-	   * @return {Promise} It is resolved when the connection is established, otherwise it is rejected.
-	   */
-	  join (key, options) {
-	    throw new Error('Must be implemented by subclass!')
-	  }
-
-	  /**
-	   * Establish a connection between you and another peer (including joining peer) via web channel.
-	   *
-	   * @abstract
-	   * @param  {WebChannel} wc - Web Channel through which the connection will be established.
-	   * @param  {string} id - Peer id with whom you will be connected.
-	   * @return {Promise} - Resolved once the connection has been established, rejected otherwise.
-	   */
-	  connectMeTo (wc, id) {
-	    throw new Error('Must be implemented by subclass!')
-	  }
-	}
-
-	let WebRTC = {}
-	let RTCPeerConnection$1
-	let RTCIceCandidate$1
-	if (typeof window !== 'undefined') {
-	  RTCPeerConnection$1 = window.RTCPeerConnection
-	  RTCIceCandidate$1 = window.RTCIceCandidate
-	} else {
-	  WebRTC = require('wrtc')
-	  RTCPeerConnection$1 = WebRTC.RTCPeerConnection
-	  RTCIceCandidate$1 = WebRTC.RTCIceCandidate
-	}
-
-	/**
-	 * Ice candidate event handler.
-	 *
-	 * @callback WebRTCService~onCandidate
-	 * @param {external:RTCPeerConnectionIceEvent} evt - Event.
-	 */
-
-	/**
-	 * Session description event handler.
-	 *
-	 * @callback WebRTCService~onSDP
-	 * @param {external:RTCPeerConnectionIceEvent} evt - Event.
-	 */
-
-	/**
-	 * Data channel event handler.
-	 *
-	 * @callback WebRTCService~onChannel
-	 * @param {external:RTCPeerConnectionIceEvent} evt - Event.
-	 */
-
-	/**
-	 * The goal of this class is to prevent the error when adding an ice candidate
-	 * before the remote description has been set.
-	 */
-	class RTCPendingConnections {
-	  constructor () {
-	    this.connections = new Map()
-	  }
-
-	  /**
-	   * Prepares pending connection for the specified peer only if it has not been added already.
-	   *
-	   * @param  {string} id - Peer id
-	   */
-	  add (id) {
-	    if (!this.connections.has(id)) {
-	      let pc = null
-	      let obj = {promise: null}
-	      obj.promise = new Promise((resolve, reject) => {
-	        Object.defineProperty(obj, 'pc', {
-	          get: () => pc,
-	          set: (value) => {
-	            pc = value
-	            resolve()
-	          }
-	        })
-	        setTimeout(reject, CONNECT_TIMEOUT, 'timeout')
-	      })
-	      this.connections.set(id, obj)
-	    }
-	  }
-
-	  /**
-	   * Remove a pending connection from the Map. Usually when the connection has already
-	   * been established and there is now interest to hold this reference.
-	   *
-	   * @param  {string} id - Peer id.
-	   */
-	  remove (id) {
-	    this.connections.delete(id)
-	  }
-
-	  /**
-	   * Returns RTCPeerConnection object for the provided peer id.
-	   *
-	   * @param  {string} id - Peer id.
-	   * @return {external:RTCPeerConnection} - Peer connection.
-	   */
-	  getPC (id) {
-	    return this.connections.get(id).pc
-	  }
-
-	  /**
-	   * Updates RTCPeerConnection reference for the provided peer id.
-	   *
-	   * @param  {string} id - Peer id.
-	   * @param  {external:RTCPeerConnection} pc - Peer connection.
-	   */
-	  setPC (id, pc) {
-	    this.connections.get(id).pc = pc
-	  }
-
-	  /**
-	   * When the remote description is set, it will add the ice candidate to the
-	   * peer connection of the specified peer.
-	   *
-	   * @param  {string} id - Peer id.
-	   * @param  {external:RTCIceCandidate} candidate - Ice candidate.
-	   * @return {Promise} - Resolved once the ice candidate has been succesfully added.
-	   */
-	  addIceCandidate (id, candidate) {
-	    let obj = this.connections.get(id)
-	    return obj.promise.then(() => {
-	      return obj.pc.addIceCandidate(candidate)
+	  add (channel) {
+	    let wc = channel.webChannel
+	    let peerIds = new Set([wc.myId])
+	    let jpIds = new Set()
+	    wc.channels.forEach((c) => peerIds.add(c.peerId))
+	    wc.getJoiningPeers().forEach((jp) => {
+	      if (channel.peerId !== jp.id && !peerIds.has(jp.id)) {
+	        jpIds.add(jp.id)
+	      }
 	    })
-	  }
-	}
-
-	const CONNECT_TIMEOUT = 2000
-	const connectionsByWC = new Map()
-
-	/**
-	 * Service class responsible to establish connections between peers via
-	 * `RTCDataChannel`.
-	 *
-	 * @see {@link external:RTCPeerConnection}
-	 * @extends module:channelBuilder~ChannelBuilderInterface
-	 */
-	class WebRTCService extends ChannelBuilderInterface {
-
-	  /**
-	   * WebRTCService constructor.
-	   *
-	   * @param  {Object} [options] - This service options.
-	   * @param  {Object} [options.signaling='ws://sigver-coastteam.rhcloud.com:8000'] -
-	   * Signaling server URL.
-	   * @param  {Object[]} [options.iceServers=[{urls: 'stun:23.21.150.121'},{urls: 'stun:stun.l.google.com:19302'},{urls: 'turn:numb.viagenie.ca', credential: 'webrtcdemo', username: 'louis%40mozilla.com'}]] - WebRTC options to setup which STUN
-	   * and TURN servers to be used.
-	   */
-	  constructor (options = {}) {
-	    super()
-	    this.defaults = {
-	      signaling: 'ws://sigver-coastteam.rhcloud.com:8000',
-	      iceServers: [
-	        {urls: 'stun:turn01.uswest.xirsys.com'}
-	      ]
-	    }
-	    this.settings = Object.assign({}, this.defaults, options)
+	    return this.connectWith(wc, channel.peerId, channel.peerId, [...peerIds], [...jpIds])
 	  }
 
-	  onMessage (wc, ch, msg) {
-	    let connections = this.getPendingConnections(wc)
-	    connections.add(msg.sender)
-	    if ('offer' in msg) {
-	      this.createPeerConnectionAndAnswer(
-	        (candidate) => wc.sendSrvMsg(this.name, msg.sender,
-	          {sender: wc.myId, candidate}),
-	        (answer) => wc.sendSrvMsg(this.name, msg.sender,
-	          {sender: wc.myId, answer}),
-	        (channel) => {
-	          let channelBuilderService = provide(CHANNEL_BUILDER)
-	          channelBuilderService.onChannel(wc, channel, true, msg.sender)
-	          connections.remove(channel.peerId)
-	        },
-	        msg.offer
-	      ).then((pc) => {
-	        connections.setPC(msg.sender, pc)
-	      })
-	    } if ('answer' in msg) {
-	      connections.getPC(msg.sender)
-	        .setRemoteDescription(msg.answer)
-	        .catch((err) => console.error(`Set answer: ${err.message}`))
-	    } else if ('candidate' in msg) {
-	      connections.addIceCandidate(msg.sender, new RTCIceCandidate$1(msg.candidate))
-	        .catch((err) => { console.error(`Add ICE candidate: ${err.message}`) })
+	  broadcast (webChannel, data) {
+	    let d
+	    for (let c of webChannel.channels) {
+	      d = !isBrowser() ? data.slice(0) : data
+	      c.send(d)
 	    }
 	  }
 
-	  // Equivalent connectMeTo(wc, id)
-	  connectOverWebChannel (wc, id) {
-	    return new Promise((resolve, reject) => {
-	      let sender = wc.myId
-	      let connections = this.getPendingConnections(wc)
-	      connections.add(id)
-	      this.createPeerConnectionAndOffer(
-	        (candidate) => wc.sendSrvMsg(this.name, id, {sender, candidate}),
-	        (offer) => wc.sendSrvMsg(this.name, id, {sender, offer}),
-	        (channel) => {
-	          connections.remove(id)
-	          resolve(channel)
-	        }
-	      ).then((pc) => connections.setPC(id, pc))
-	      setTimeout(reject, CONNECT_TIMEOUT, 'connectMeTo timeout')
-	    })
-	  }
-
-	  // Equivalent à open
-	  listenFromSignaling (ws, onChannel) {
-	    let connections = new RTCPendingConnections()
-
-	    ws.onmessage = (evt) => {
-	      let msg = JSON.parse(evt.data)
-	      if (!('id' in msg) || !('data' in msg)) {
-	        console.error('Unknown message from the signaling server: ', evt.data)
-	        ws.close()
+	  sendTo (id, webChannel, data) {
+	    for (let c of webChannel.channels) {
+	      if (c.peerId === id) {
+	        c.send(data)
 	        return
 	      }
-	      connections.add(msg.id)
-	      if ('offer' in msg.data) {
-	        this.createPeerConnectionAndAnswer(
-	            (candidate) => ws.send(JSON.stringify({id: msg.id, data: {candidate}})),
-	            (answer) => ws.send(JSON.stringify({id: msg.id, data: {answer}})),
-	            onChannel,
-	            msg.data.offer
-	          ).then((pc) => connections.setPC(msg.id, pc))
-	          .catch((err) => {
-	            console.error(`Answer generation failed: ${err.message}`)
-	          })
-	      } else if ('candidate' in msg.data) {
-	        connections.addIceCandidate(msg.id, new RTCIceCandidate$1(msg.data.candidate))
-	          .catch((err) => {
-	            console.error(`Adding ice candidate failed: ${err.message}`)
-	          })
-	      }
 	    }
 	  }
 
-	  connectOverSignaling (ws, key, options = {}) {
-	    return new Promise((resolve, reject) => {
-	      let pc
-
-	      ws.onmessage = (evt) => {
-	        try {
-	          let msg = JSON.parse(evt.data)
-	          // Check message format
-	          if (!('data' in msg)) {
-	            reject(`Unknown message from the signaling server: ${evt.data}`)
-	          }
-
-	          if ('answer' in msg.data) {
-	            pc.setRemoteDescription(msg.data.answer)
-	              .catch((err) => {
-	                console.error(`Set answer: ${err.message}`)
-	                reject(err)
-	              })
-	          } else if ('candidate' in msg.data) {
-	            pc.addIceCandidate(new RTCIceCandidate$1(msg.data.candidate))
-	              .catch((evt) => {
-	                // This exception does not reject the current Promise, because
-	                // still the connection may be established even without one or
-	                // several candidates
-	                console.error(`Add ICE candidate: ${evt.message}`)
-	              })
-	          } else {
-	            reject(`Unknown message from the signaling server: ${evt.data}`)
-	          }
-	        } catch (err) {
-	          reject(err.message)
-	        }
-	      }
-	      this.createPeerConnectionAndOffer(
-	          (candidate) => ws.send(JSON.stringify({data: {candidate}})),
-	          (offer) => ws.send(JSON.stringify({join: key, data: {offer}})),
-	          resolve
-	        )
-	        .then((peerConnection) => { pc = peerConnection })
-	        .catch(reject)
-	    })
-	  }
-
-	  /**
-	   * Creates a peer connection and generates an SDP offer.
-	   *
-	   * @param  {WebRTCService~onCandidate} onCandidate - Ice candidate event handler.
-	   * @param  {WebRTCService~onSDP} sendOffer - Session description event handler.
-	   * @param  {WebRTCService~onChannel} onChannel - Handler event when the data channel is ready.
-	   * @return {Promise} - Resolved when the offer has been succesfully created,
-	   * set as local description and sent to the peer.
-	   */
-	  createPeerConnectionAndOffer (onCandidate, sendOffer, onChannel) {
-	    let pc = this.createPeerConnection(onCandidate)
-	    let dc = pc.createDataChannel(null)
-	    pc.oniceconnectionstatechange = () => {
-	      if (pc.iceConnectionState === 'disconnected') {
-	        if (typeof window !== 'undefined') {
-	          dc.onclose(new CloseEvent(pc.iceConnectionState))
-	        }
-	      }
-	    }
-	    dc.onopen = (evt) => onChannel(dc)
-	    return pc.createOffer()
-	      .then((offer) => pc.setLocalDescription(offer))
-	      .then(() => {
-	        let description = JSON.parse(JSON.stringify(pc.localDescription))
-	        // sendOffer(pc.localDescription.toJSON())
-	        sendOffer(description)
-	        return pc
-	      })
-	  }
-
-	  /**
-	   * Creates a peer connection and generates an SDP answer.
-	   *
-	   * @param  {WebRTCService~onCandidate} onCandidate - Ice candidate event handler.
-	   * @param  {WebRTCService~onSDP} sendOffer - Session description event handler.
-	   * @param  {WebRTCService~onChannel} onChannel - Handler event when the data channel is ready.
-	   * @param  {Object} offer - Offer received from a peer.
-	   * @return {Promise} - Resolved when the offer has been succesfully created,
-	   * set as local description and sent to the peer.
-	   */
-	  createPeerConnectionAndAnswer (onCandidate, sendAnswer, onChannel, offer) {
-	    let pc = this.createPeerConnection(onCandidate)
-	    pc.ondatachannel = (dcEvt) => {
-	      let dc = dcEvt.channel
-	      pc.oniceconnectionstatechange = () => {
-	        if (pc.iceConnectionState === 'disconnected') {
-	          if (typeof window !== 'undefined') {
-	            dc.onclose(new CloseEvent(pc.iceConnectionState))
-	          }
-	        }
-	      }
-	      dc.onopen = (evt) => onChannel(dc)
-	    }
-	    return pc.setRemoteDescription(offer)
-	      .then(() => pc.createAnswer())
-	      .then((answer) => pc.setLocalDescription(answer))
-	      .then(() => {
-	        // sendAnswer(pc.localDescription.toJSON())
-	        let description = JSON.parse(JSON.stringify(pc.localDescription))
-	        sendAnswer(description)
-	        return pc
-	      })
-	      .catch((err) => {
-	        console.error(`Set offer & generate answer: ${err.message}`)
-	      })
-	  }
-
-	  /**
-	   * Creates an instance of `RTCPeerConnection` and sets `onicecandidate` event handler.
-	   *
-	   * @private
-	   * @param  {WebRTCService~onCandidate} onCandidate - Ice
-	   * candidate event handler.
-	   * @return {external:RTCPeerConnection} - Peer connection.
-	   */
-	  createPeerConnection (onCandidate) {
-	    let pc = new RTCPeerConnection$1({iceServers: this.settings.iceServers})
-	    pc.onicecandidate = (evt) => {
-	      if (evt.candidate !== null) {
-	        let candidate = {
-	          candidate: evt.candidate.candidate,
-	          sdpMid: evt.candidate.sdpMid,
-	          sdpMLineIndex: evt.candidate.sdpMLineIndex
-	        }
-	        onCandidate(candidate)
-	      }
-	    }
-	    return pc
-	  }
-
-	  getPendingConnections (wc) {
-	    if (connectionsByWC.has(wc.id)) {
-	      return connectionsByWC.get(wc.id)
-	    } else {
-	      let connections = new RTCPendingConnections()
-	      connectionsByWC.set(wc.id, connections)
-	      return connections
-	    }
-	  }
+	  leave (webChannel) {}
 	}
 
-	const CONNECT_TIMEOUT$1 = 500
-
-	let WebSocket
-	if (typeof window === 'undefined') WebSocket = require('ws')
-	else WebSocket = window.WebSocket
-
+	const CONNECT_TIMEOUT$1 = 5000
+	const WebSocket = isBrowser() ? window.WebSocket : require('ws')
 	const OPEN = WebSocket.OPEN
-	let CloseEvent$1 = WebSocket.CloseEvent
 
-	class WebSocketService {
+	class WebSocketService extends ServiceInterface {
 
-	  constructor (options = {}) {
-	    this.defaults = {
-	      host: '127.0.0.1',
-	      port: 8080
-	    }
-	    this.settings = Object.assign({}, this.defaults, options)
-	  }
+	  constructor() { super() }
 
 	  /**
 	   * Creates WebSocket with server.
@@ -2376,29 +2320,28 @@
 	        }
 	        ws.onclose = (closeEvt) => {
 	          if (closeEvt.code !== 1000) {
-	            console.error(`WebSocket with ${url} has closed. ${closeEvt.code}: ${closeEvt.reason}`)
+	            console.error(`WebSocket with ${url} closed. ${closeEvt.code}: ${closeEvt.reason}`)
 	            reject(closeEvt.reason)
 	          }
 	        }
 	        // Timeout for node (otherwise it will loop forever if incorrect address)
-	        if (ws.readyState === WebSocket.CONNECTING) {
-	          setTimeout(() => {
-	            if (ws.readyState === WebSocket.CONNECTING) {
-	              reject('Node Timeout reached')
-	            }
-	          }, CONNECT_TIMEOUT$1)
-	        } else if (ws.readyState === WebSocket.CLOSING ||
-	              ws.readyState === WebSocket.CLOSED) {
-	          reject('Socked closed on open')
-	        }
+	        setTimeout(() => {
+	          if (ws.readyState !== WebSocket.OPEN) {
+	            reject(`WebSocket connection timeout with ${url}`)
+	          }
+	        }, CONNECT_TIMEOUT$1)
 	      } catch (err) { reject(err.message) }
 	    })
 	  }
 
 	}
 
+	let src$1 = isBrowser() ? window : require('text-encoding')
+	const TextEncoder = src$1.TextEncoder
+	const TextDecoder = src$1.TextDecoder
+
 	/**
-	 * Maximum user message size sent over *Channel*. Is meant without metadata.
+	 * Maximum size of the user message sent over *Channel*. Is meant without metadata.
 	 * @type {number}
 	 */
 	const MAX_USER_MSG_SIZE = 16365
@@ -2528,12 +2471,6 @@
 
 	  constructor () {
 	    super()
-	    this.TextEncoder
-	    this.TextDecoder
-	    if (typeof window === 'undefined') this.TextEncoder = require('text-encoding').TextEncoder
-	    else this.TextEncoder = window.TextEncoder
-	    if (typeof window === 'undefined') this.TextDecoder = require('text-encoding').TextDecoder
-	    else this.TextDecoder = window.TextDecoder
 	  }
 
 	  /**
@@ -2601,7 +2538,7 @@
 	   * @returns {external:ArrayBuffer} - Built message
 	   */
 	  msg (code, data = {}, recepientId = null) {
-	    let msgEncoded = (new this.TextEncoder()).encode(JSON.stringify(data))
+	    let msgEncoded = (new TextEncoder()).encode(JSON.stringify(data))
 	    let msgSize = msgEncoded.byteLength + HEADER_OFFSET
 	    let dataView = this.initHeader(code, recepientId, msgSize)
 	    let fullMsg = new Uint8Array(dataView.buffer)
@@ -2655,7 +2592,7 @@
 	   */
 	  readInternalMessage (data) {
 	    let uInt8Array = new Uint8Array(data)
-	    return JSON.parse((new this.TextDecoder())
+	    return JSON.parse((new TextDecoder())
 	      .decode(uInt8Array.subarray(HEADER_OFFSET, uInt8Array.byteLength))
 	    )
 	  }
@@ -2721,7 +2658,7 @@
 	      case U_INT_8_ARRAY_TYPE:
 	        return new Uint8Array(buffer)
 	      case STRING_TYPE:
-	        return new this.TextDecoder().decode(new Uint8Array(buffer))
+	        return new TextDecoder().decode(new Uint8Array(buffer))
 	      case INT_8_ARRAY_TYPE:
 	        return new Int8Array(buffer)
 	      case U_INT_8_CLAMPED_ARRAY_TYPE:
@@ -2762,7 +2699,7 @@
 	      result.content = data
 	    } else if (typeof data === 'string' || data instanceof String) {
 	      result.type = STRING_TYPE
-	      result.content = new this.TextEncoder().encode(data)
+	      result.content = new TextEncoder().encode(data)
 	    } else {
 	      result.content = new Uint8Array(data.buffer)
 	      if (data instanceof Int8Array) {
@@ -3137,17 +3074,16 @@
 	  /**
 	   * @param {WebChannelGate~onClose} onClose - close event handler
 	   */
-	  constructor (onClose) {
+	  constructor (onClose = () => {}) {
 	    /**
 	     * Web socket which holds the connection with the signaling server.
 	     * @private
 	     * @type {external:WebSocket}
 	     */
-	    this.socket = null
+	    this.ws = null
 
 	    /**
 	     * // TODO: add doc
-	     * @private
 	     * @type {WebChannelGate~AccessData}
 	     */
 	    this.accessData = {}
@@ -3161,38 +3097,32 @@
 	  }
 
 	  /**
-	   * Get access data.
-	   * @returns {WebChannelGate~AccessData|null} - Returns access data if the door
-	   * is opened and *null* if it closed
-	   */
-	  getAccessData () {
-	    return this.accessData
-	  }
-
-	  /**
 	   * Open the door.
 	   * @param {external:WebSocket} socket - Web socket to signalign server
 	   * @param {WebChannelGate~AccessData} accessData - Access data to join the
 	   * *WebChannel
 	   */
-	  open (onChannel, url) {
+	  open (onChannel, options) {
+	    let url = options.signaling
+
 	    return new Promise((resolve, reject) => {
 	      let webRTCService = provide(WEBRTC)
 	      let webSocketService = provide(WEBSOCKET)
-	      let key = this.generateKey()
+	      let key = 'key' in options ? options.key : this.generateKey()
 	      webSocketService.connect(url)
 	        .then((ws) => {
 	          ws.onclose = (closeEvt) => {
 	            reject(closeEvt.reason)
 	            this.onClose(closeEvt)
 	          }
-	          this.socket = ws
+	          ws.onerror = (err) => reject(err.message)
+	          this.ws = ws
 	          this.accessData.key = key
 	          this.accessData.url = url
 	          try {
 	            ws.send(JSON.stringify({key}))
-	            // TODO: find a better solution than setTimeout. This is for the case when the key already exists and thus the server will close the socket, but it will close it after this function resolves the Promise.
-	            setTimeout(() => { resolve(this.accessData) }, 100, {url, key})
+	            // FIXME: find a better solution than setTimeout. This is for the case when the key already exists and thus the server will close the socket, but it will close it after this function resolves the Promise.
+	            setTimeout(() => { resolve(this.accessData) }, 700, {url, key})
 	          } catch (err) {
 	            reject(err.message)
 	          }
@@ -3208,7 +3138,7 @@
 	   * closed
 	   */
 	  isOpen () {
-	    return this.socket !== null && this.socket.readyState === OPEN
+	    return this.ws !== null && this.ws.readyState === OPEN
 	  }
 
 	  /**
@@ -3216,8 +3146,9 @@
 	   */
 	  close () {
 	    if (this.isOpen()) {
-	      this.socket.close()
-	      this.socket = null
+	      this.ws.close()
+	      this.accessData = {}
+	      this.ws = null
 	    }
 	  }
 
@@ -3314,13 +3245,15 @@
 	 */
 	const JOIN_SUCCESS = 8
 
-	/**
-	 * One of the internal message type. This message is sent during Initialization
-	 * of a channel.
-	 * @see {@link WebChannel#initChannel}
-	 * @type {number}
-	 */
-	const INIT_CHANNEL_PONG = 10
+	// /**
+	//  * One of the internal message type. This message is sent during Initialization
+	//  * of a channel.
+	//  * @see {@link WebChannel#initChannel}
+	//  * @type {number}
+	//  */
+	// const INIT_CHANNEL_PONG = 10
+
+	const INIT_OK = 10
 
 	/**
 	 * One of the internal message type. Ping message.
@@ -3380,7 +3313,7 @@
 	 * he can join the webcahnnel
 	 * @type {string}
 	 */
-	const ADD_BOT_SERVER$1 = 'addBotServer'
+	const ADD_BOT_SERVER = 'addBotServer'
 
 	/**
 	 * This class is an API starting point. It represents a group of collaborators
@@ -3414,7 +3347,7 @@
 	    this.defaults = {
 	      connector: WEBRTC,
 	      topology: FULLY_CONNECTED,
-	      signaling: 'ws://sigver-coastteam.rhcloud.com:8000'
+	      signaling: 'wss://sigver-coastteam.rhcloud.com:8443'
 	    }
 	    this.settings = Object.assign({}, this.defaults, options)
 
@@ -3543,9 +3476,9 @@
 	  open (options = {}) {
 	    let settings = Object.assign({}, this.settings, options)
 	    return this.gate.open((channel) => {
-	      this.initChannel(channel, false)
+	      this.initChannel(channel)
 	        .then((channel) => this.addChannel(channel))
-	    }, settings.signaling)
+	    }, settings)
 	  }
 
 	  /**
@@ -3565,10 +3498,9 @@
 	      }
 	    }
 	    channel.send(msgBld.msg(JOIN_INIT, {
-	        manager: this.settings.topology,
-	        wcId: this.id
-	      }, channel.peerId)
-	    )
+	      manager: this.settings.topology,
+	      wcId: this.id
+	    }, channel.peerId))
 	    return this.manager.add(channel)
 	      .then(() => {
 	        channel.send(msgBld.msg(JOIN_FINILIZE))
@@ -3604,12 +3536,10 @@
 	          Once the connection open a message is sent to the server in order
 	          that he can join initiate the channel
 	        */
-	        socket.send(JSON.stringify({code: ADD_BOT_SERVER$1, sender: this.myId, wcId: this.id}))
-	        this.initChannel(socket, false).then((channel) => {
-	          this.addChannel(channel).then(() => {
-	            resolve()
-	          })
-	        })
+	        socket.send(JSON.stringify({code: ADD_BOT_SERVER, sender: this.myId, wcId: this.id}))
+	        this.initChannel(socket)
+	          .then((channel) => this.addChannel(channel))
+	          .then(() => resolve())
 	      }).catch((reason) => {
 	        reject(reason)
 	      })
@@ -3628,7 +3558,7 @@
 	  joinAsBot (channel, id) {
 	    return new Promise((resolve, reject) => {
 	      this.onJoin = () => resolve(this)
-	      this.initChannel(channel, true, id)// .then((channel) => {
+	      this.initChannel(channel, id)// .then((channel) => {
 	        // console.log('[DEBUG] Resolved initChannel by server')
 	      // })
 	    })
@@ -3658,7 +3588,7 @@
 	   * or null is the *WebChannel* is closed
 	   */
 	  getAccess () {
-	    return this.gate.getAccessData()
+	    return this.gate.accessData
 	  }
 
 	  /**
@@ -3676,8 +3606,9 @@
 	      webSocketService.connect(settings.signaling)
 	        .then((ws) => {
 	          ws.onclose = (closeEvt) => reject(closeEvt.reason)
+	          ws.onerror = (error) => reject(error.reason)
 	          return webRTCService.connectOverSignaling(ws, key)
-	            .then((channel) => this.initChannel(channel, true))
+	            .then((channel) => this.initChannel(channel))
 	        })
 	        .catch(reject)
 	    })
@@ -3953,8 +3884,8 @@
 	   */
 	  onChannelMessage (channel, data) {
 	    let header = msgBld.readHeader(data)
-	    //console.log('ON CHANNEL MESSAGE:\n - code=' + header.code + '\n - sender=' + header.senderId + '\n - recepient=' + header.recepientId)
-	    // console.log('[DEBUG] {onChannelMessage} header: ', header, this.myId)
+	    // console.log('ON CHANNEL MESSAGE:\n - code=' + header.code + '\n - sender=' + header.senderId + '\n - recepient=' + header.recepientId)
+	    // console.log('[DEBUG] {onChannelMessage} header: ', header)
 	    if (header.code === USER_DATA) {
 	      msgBld.readUserMessage(this.id, header.senderId, data, (fullData, isBroadcast) => {
 	        this.onMessage(header.senderId, fullData, isBroadcast)
@@ -4034,9 +3965,13 @@
 	            
 	          }
 	          break
-	        case INIT_CHANNEL_PONG:
-	          channel.onPong()
-	          delete channel.onPong
+	        // case INIT_CHANNEL_PONG:
+	        //   channel.onPong()
+	        //   delete channel.onPong
+	        //   break
+	        case INIT_OK:
+	          channel.onOk()
+	          delete channel.onOk
 	          break
 	        case PING:
 	          this.manager.sendTo(header.senderId, this, msgBld.msg(PONG))
@@ -4156,29 +4091,23 @@
 	   * @private
 	   * @param {external:WebSocket|external:RTCDataChannel} ch - Channel to
 	   * initialize
-	   * @param {boolean} isInitiator - Equals to true if this peer is an initiator
-	   * in the channel establishment, false otherwise
 	   * @param {number} [id] - Assign an id to this channel. It would be generated
 	   * if not provided
 	   * @returns {Promise} - Resolved once the channel is initialized on both sides
 	   */
-	  initChannel (ch, isInitiator, id = -1) {
-	    // console.log('[DEBUG] initChannel (ch, isInitiator, id) (ch, ', isInitiator, ', ', id, ')')
+	  initChannel (ch, id = -1) {
 	    return new Promise((resolve, reject) => {
 	      if (id === -1) { id = this.generateId() }
 	      let channel = new Channel(ch, this, id)
 	      // TODO: treat the case when the 'ping' or 'pong' message has not been received
-	      if (isInitiator) {
-	        channel.config()
-	        channel.onPong = () => resolve(channel)
-	        ch.send('ping')
-	      } else {
-	        ch.onmessage = (msgEvt) => {
-	          if (msgEvt.data === 'ping') {
-	            channel.config()
-	            channel.send(msgBld.msg(INIT_CHANNEL_PONG))
-	            resolve(channel)
-	          }
+	      channel.config()
+	      channel.onOk = () => resolve(channel)
+	      ch.send('ok')
+	      ch.onmessage = (msgEvt) => {
+	        if (msgEvt.data === 'ok') {
+	          channel.config()
+	          channel.send(msgBld.msg(INIT_OK))
+	          resolve(channel)
 	        }
 	      }
 	    })
@@ -4333,12 +4262,12 @@
 	  }
 	}
 
-	const ADD_BOT_SERVER = 'addBotServer'
-	const NEW_CHANNEL = 'newChannel'
+	const ADD_BOT_SERVER$1 = 'addBotServer'
+	const NEW_CHANNEL$1 = 'newChannel'
 
 	class Bot {
 	  constructor (options = {}) {
-	    if (typeof window !== 'undefined') throw new Error('Bot can be instanciate only in Node\'s environment')
+	    if (isBrowser()) throw new Error('Bot can be instanciated only in Node\'s environment')
 	    this.defaults = {
 	      host: '127.0.0.1',
 	      port: 9000,
@@ -4384,7 +4313,7 @@
 	        resolve()
 	      })
 
-	      this.server.on('error', (err) =>  {
+	      this.server.on('error', () => {
 	        reject('WebSocketServerError with ws://' + this.settings.host + ':' + this.settings.port)
 	      })
 
@@ -4397,14 +4326,14 @@
 	            data = JSON.parse(msg)
 	          } catch (e) {}
 	          switch (data.code) {
-	            case ADD_BOT_SERVER:
-	            this.addBotServer(socket, data)
-	            break
-	            case NEW_CHANNEL:
-	            this.newChannel(socket, data)
-	            break
+	            case ADD_BOT_SERVER$1:
+	              this.addBotServer(socket, data)
+	              break
+	            case NEW_CHANNEL$1:
+	              this.newChannel(socket, data)
+	              break
 	            default:
-	            this.onCodeError()
+	              this.onCodeError()
 	          }
 	        })
 	      })
@@ -4471,8 +4400,8 @@
 	  }
 	}
 
-	exports.Bot = Bot;
 	exports.WebChannel = WebChannel;
+	exports.Bot = Bot;
 
 	Object.defineProperty(exports, '__esModule', { value: true });
 

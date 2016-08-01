@@ -1,5 +1,5 @@
 import {signaling} from 'config'
-import {WebChannel} from 'src/WebChannel'
+import WebChannel from 'src/WebChannel'
 import {FULLY_CONNECTED, SPRAY} from 'serviceProvider'
 
 describe('3 peers -> ', () => {
@@ -10,7 +10,7 @@ describe('3 peers -> ', () => {
     let msg2 = 'Hi, I am #2'
     let msg3 = 'Hello, here is #3'
     // Peer #1
-    wc1 = new WebChannel({signaling})//, topology: SPRAY})
+    wc1 = new WebChannel({signaling, topology: SPRAY})
     wc1.onMessage = (id, msg) => {
       console.log('wc1', wc1.myId, id, msg)
       if (id === wc3.myId) {
@@ -25,7 +25,7 @@ describe('3 peers -> ', () => {
     }
     wc1.open().then((data) => {
       // Peer #2
-      wc2 = new WebChannel({signaling})//, topology: SPRAY})
+      wc2 = new WebChannel({signaling, topology: SPRAY})
       wc2.onMessage = (id, msg) => {
         console.log('wc2', wc2.myId, id, msg)
         if (id === wc3.myId) {
@@ -41,11 +41,11 @@ describe('3 peers -> ', () => {
       }
 
       wc2.join(data.key).then(() => {
-        // wc2.manager.shuffle(wc2)
+        wc2.manager.shuffle(wc2)
         
         // Peer #3
         setTimeout(() => {
-        wc3 = new WebChannel({signaling})//, topology: SPRAY})
+        wc3 = new WebChannel({signaling, topology: SPRAY})
         wc3.onMessage = (id, msg) => {
           console.log('wc3', wc3.myId, id, msg)
           if (id === wc2.myId) {

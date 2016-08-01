@@ -1,17 +1,22 @@
-import {ChannelBuilderInterface} from 'service/channelBuilder/channelBuilder'
+import {isBrowser} from 'helper'
+import ServiceInterface from 'service/ServiceInterface'
 import {CHANNEL_BUILDER, provide} from 'serviceProvider'
+import CloseEvent from 'CloseEvent'
 
-let WebRTC = {}
-let RTCPeerConnection
-let RTCIceCandidate
-if (typeof window !== 'undefined') {
-  RTCPeerConnection = window.RTCPeerConnection
-  RTCIceCandidate = window.RTCIceCandidate
-} else {
-  WebRTC = require('wrtc')
-  RTCPeerConnection = WebRTC.RTCPeerConnection
-  RTCIceCandidate = WebRTC.RTCIceCandidate
+const CONNECT_TIMEOUT = 2000
+const connectionsByWC = new Map()
+let RTCPendingConnections, src
+let availableService = true
+if (isBrowser()) src = window
+else {
+  try {
+    src = require('wrtc')
+  } catch (err) {
+    availableService = false
+  }
 }
+const RTCPeerConnection = src.RTCPeerConnection
+const RTCIceCandidate = src.RTCIceCandidate
 
 /**
  * Ice candidate event handler.
@@ -35,94 +40,17 @@ if (typeof window !== 'undefined') {
  */
 
 /**
- * The goal of this class is to prevent the error when adding an ice candidate
- * before the remote description has been set.
- */
-class RTCPendingConnections {
-  constructor () {
-    this.connections = new Map()
-  }
-
-  /**
-   * Prepares pending connection for the specified peer only if it has not been added already.
-   *
-   * @param  {string} id - Peer id
-   */
-  add (id) {
-    if (!this.connections.has(id)) {
-      let pc = null
-      let obj = {promise: null}
-      obj.promise = new Promise((resolve, reject) => {
-        Object.defineProperty(obj, 'pc', {
-          get: () => pc,
-          set: (value) => {
-            pc = value
-            resolve()
-          }
-        })
-        setTimeout(reject, CONNECT_TIMEOUT, 'timeout')
-      })
-      this.connections.set(id, obj)
-    }
-  }
-
-  /**
-   * Remove a pending connection from the Map. Usually when the connection has already
-   * been established and there is now interest to hold this reference.
-   *
-   * @param  {string} id - Peer id.
-   */
-  remove (id) {
-    this.connections.delete(id)
-  }
-
-  /**
-   * Returns RTCPeerConnection object for the provided peer id.
-   *
-   * @param  {string} id - Peer id.
-   * @return {external:RTCPeerConnection} - Peer connection.
-   */
-  getPC (id) {
-    return this.connections.get(id).pc
-  }
-
-  /**
-   * Updates RTCPeerConnection reference for the provided peer id.
-   *
-   * @param  {string} id - Peer id.
-   * @param  {external:RTCPeerConnection} pc - Peer connection.
-   */
-  setPC (id, pc) {
-    this.connections.get(id).pc = pc
-  }
-
-  /**
-   * When the remote description is set, it will add the ice candidate to the
-   * peer connection of the specified peer.
-   *
-   * @param  {string} id - Peer id.
-   * @param  {external:RTCIceCandidate} candidate - Ice candidate.
-   * @return {Promise} - Resolved once the ice candidate has been succesfully added.
-   */
-  addIceCandidate (id, candidate) {
-    let obj = this.connections.get(id)
-    return obj.promise.then(() => {
-      return obj.pc.addIceCandidate(candidate)
-    })
-  }
-}
-
-const CONNECT_TIMEOUT = 2000
-const connectionsByWC = new Map()
-
-/**
  * Service class responsible to establish connections between peers via
  * `RTCDataChannel`.
  *
  * @see {@link external:RTCPeerConnection}
  * @extends module:channelBuilder~ChannelBuilderInterface
  */
-class WebRTCService extends ChannelBuilderInterface {
+class WebRTCService extends ServiceInterface {
+
+  static isAvailabled () {
+    return availableService
+  }
 
   /**
    * WebRTCService constructor.
@@ -251,11 +179,14 @@ class WebRTCService extends ChannelBuilderInterface {
             reject(`Unknown message from the signaling server: ${evt.data}`)
           }
         } catch (err) {
+          console.log('CATCH: ', err.message)
           reject(err.message)
         }
       }
       this.createPeerConnectionAndOffer(
-          (candidate) => ws.send(JSON.stringify({data: {candidate}})),
+          (candidate) => {
+            if (ws.readyState === 1) ws.send(JSON.stringify({data: {candidate}}))
+          },
           (offer) => ws.send(JSON.stringify({join: key, data: {offer}})),
           resolve
         )
@@ -362,6 +293,84 @@ class WebRTCService extends ChannelBuilderInterface {
       connectionsByWC.set(wc.id, connections)
       return connections
     }
+  }
+}
+
+/**
+ * The goal of this class is to prevent the error when adding an ice candidate
+ * before the remote description has been set.
+ */
+RTCPendingConnections = class RTCPendingConnections {
+  constructor () {
+    this.connections = new Map()
+  }
+
+  /**
+   * Prepares pending connection for the specified peer only if it has not been added already.
+   *
+   * @param  {string} id - Peer id
+   */
+  add (id) {
+    if (!this.connections.has(id)) {
+      let pc = null
+      let obj = {promise: null}
+      obj.promise = new Promise((resolve, reject) => {
+        Object.defineProperty(obj, 'pc', {
+          get: () => pc,
+          set: (value) => {
+            pc = value
+            resolve()
+          }
+        })
+        setTimeout(reject, CONNECT_TIMEOUT, 'timeout')
+      })
+      this.connections.set(id, obj)
+    }
+  }
+
+  /**
+   * Remove a pending connection from the Map. Usually when the connection has already
+   * been established and there is now interest to hold this reference.
+   *
+   * @param  {string} id - Peer id.
+   */
+  remove (id) {
+    this.connections.delete(id)
+  }
+
+  /**
+   * Returns RTCPeerConnection object for the provided peer id.
+   *
+   * @param  {string} id - Peer id.
+   * @return {external:RTCPeerConnection} - Peer connection.
+   */
+  getPC (id) {
+    return this.connections.get(id).pc
+  }
+
+  /**
+   * Updates RTCPeerConnection reference for the provided peer id.
+   *
+   * @param  {string} id - Peer id.
+   * @param  {external:RTCPeerConnection} pc - Peer connection.
+   */
+  setPC (id, pc) {
+    this.connections.get(id).pc = pc
+  }
+
+  /**
+   * When the remote description is set, it will add the ice candidate to the
+   * peer connection of the specified peer.
+   *
+   * @param  {string} id - Peer id.
+   * @param  {external:RTCIceCandidate} candidate - Ice candidate.
+   * @return {Promise} - Resolved once the ice candidate has been succesfully added.
+   */
+  addIceCandidate (id, candidate) {
+    let obj = this.connections.get(id)
+    return obj.promise.then(() => {
+      return obj.pc.addIceCandidate(candidate)
+    })
   }
 }
 

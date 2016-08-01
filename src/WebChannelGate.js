@@ -1,5 +1,5 @@
 import {provide, WEBRTC, WEBSOCKET} from 'serviceProvider'
-import {OPEN, CloseEvent} from 'service/channelBuilder/WebSocketService'
+import {OPEN} from 'service/WebSocketService'
 
 /**
  * This class represents a door of the *WebChannel* for this peer. If the door
@@ -25,17 +25,16 @@ class WebChannelGate {
   /**
    * @param {WebChannelGate~onClose} onClose - close event handler
    */
-  constructor (onClose) {
+  constructor (onClose = () => {}) {
     /**
      * Web socket which holds the connection with the signaling server.
      * @private
      * @type {external:WebSocket}
      */
-    this.socket = null
+    this.ws = null
 
     /**
      * // TODO: add doc
-     * @private
      * @type {WebChannelGate~AccessData}
      */
     this.accessData = {}
@@ -49,38 +48,32 @@ class WebChannelGate {
   }
 
   /**
-   * Get access data.
-   * @returns {WebChannelGate~AccessData|null} - Returns access data if the door
-   * is opened and *null* if it closed
-   */
-  getAccessData () {
-    return this.accessData
-  }
-
-  /**
    * Open the door.
    * @param {external:WebSocket} socket - Web socket to signalign server
    * @param {WebChannelGate~AccessData} accessData - Access data to join the
    * *WebChannel
    */
-  open (onChannel, url) {
+  open (onChannel, options) {
+    let url = options.signaling
+
     return new Promise((resolve, reject) => {
       let webRTCService = provide(WEBRTC)
       let webSocketService = provide(WEBSOCKET)
-      let key = this.generateKey()
+      let key = 'key' in options ? options.key : this.generateKey()
       webSocketService.connect(url)
         .then((ws) => {
           ws.onclose = (closeEvt) => {
             reject(closeEvt.reason)
             this.onClose(closeEvt)
           }
-          this.socket = ws
+          ws.onerror = (err) => reject(err.message)
+          this.ws = ws
           this.accessData.key = key
           this.accessData.url = url
           try {
             ws.send(JSON.stringify({key}))
-            // TODO: find a better solution than setTimeout. This is for the case when the key already exists and thus the server will close the socket, but it will close it after this function resolves the Promise.
-            setTimeout(() => { resolve(this.accessData) }, 100, {url, key})
+            // FIXME: find a better solution than setTimeout. This is for the case when the key already exists and thus the server will close the socket, but it will close it after this function resolves the Promise.
+            setTimeout(() => { resolve(this.accessData) }, 700, {url, key})
           } catch (err) {
             reject(err.message)
           }
@@ -96,7 +89,7 @@ class WebChannelGate {
    * closed
    */
   isOpen () {
-    return this.socket !== null && this.socket.readyState === OPEN
+    return this.ws !== null && this.ws.readyState === OPEN
   }
 
   /**
@@ -104,8 +97,9 @@ class WebChannelGate {
    */
   close () {
     if (this.isOpen()) {
-      this.socket.close()
-      this.socket = null
+      this.ws.close()
+      this.accessData = {}
+      this.ws = null
     }
   }
 
