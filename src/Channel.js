@@ -59,6 +59,7 @@ class Channel {
   send (data) {
     // if (this.channel.readyState !== 'closed' && new Int8Array(data).length !== 0) {
     if (this.channel.readyState !== 'closed') {
+      // console.log('channel send', data, msgBld.readHeader(data), 'myId', this.webChannel.myId, 'other id', this.peerId)
       try {
         msgBld.completeHeader(data, this.webChannel.myId)
         this.channel.send(data)

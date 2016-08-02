@@ -31,7 +31,6 @@ class SprayService extends ManagerInterface {
 		   //      jpIds.add(jp.id)
 		   //  }
 	    // })
-	    // console.log('joiningPeers:', jpIds)
 	    return this.connectWith(wc, channel.peerId, channel.peerId, [...peerIds], [...jpIds])
 	}
 
@@ -39,8 +38,6 @@ class SprayService extends ManagerInterface {
 		// TODO: améliorer le message stocké dans broadcastedMsg et supprimer data useless pour éviter d'avoir des doublons de messages qui différent juste par ces data
 		let isAlreadyBroadcasted = false
 
-		// console.log(webChannel.myId, message)
-		// console.log(this.broadcastedMsg)
 		for (let i = 0 ; i < webChannel.broadcastedMsg.length ; i++) {
 			if (JSON.stringify(webChannel.broadcastedMsg[i].data) === JSON.stringify(message.data)
 					/*&& this.broadcastedMsg[i].header.code === message.header.code*/) {
@@ -65,54 +62,61 @@ class SprayService extends ManagerInterface {
 	}
 
 	sendTo(id, webChannel, data) {
-		console.log('from', webChannel.myId, 'to', id, data)
+		// console.log('from', webChannel.myId, 'to', id, data)
 		let directChannelExists = false
-		let isKnownPeer = false
-		let channelExists = false
+		// let isKnownPeer = false
+		// let channelExists = false
 		let randIndex
-		for (let kp of webChannel.knownPeers) {
-			if (typeof kp !== 'undefined') {
-				if (kp.peerId === id) {
-					isKnownPeer = true
-				}
-			}
-		}
+		// for (let kp of webChannel.knownPeers) {
+		// 	if (typeof kp !== 'undefined') {
+		// 		if (kp.peerId === id) {
+		// 			isKnownPeer = true
+		// 		}
+		// 	}
+		// }
 
-		if (!isKnownPeer) {
-			webChannel.channels.forEach((c) => {
-				if (c.peerId === id) {
-					channelExists = true
-					return
-				}
-			})
-			if (channelExists) {
+		webChannel.channels.forEach((c) => {
+			if (c.peerId === id) {
 				directChannelExists = true
+				return
 			}
-		} else {
-			webChannel.channels.forEach((c) => {
-				if (c.peerId === id) {
-					channelExists = true
-					return
-				}
-			})
-			if (channelExists) {
-				directChannelExists = true
-			}
-			// directChannelExists = true
-		}
+		})
+
+		// if (!isKnownPeer) {
+		// 	webChannel.channels.forEach((c) => {
+		// 		if (c.peerId === id) {
+		// 			channelExists = true
+		// 			return
+		// 		}
+		// 	})
+		// 	if (channelExists) {
+		// 		directChannelExists = true
+		// 	}
+		// } else {
+		// 	webChannel.channels.forEach((c) => {
+		// 		if (c.peerId === id) {
+		// 			channelExists = true
+		// 			return
+		// 		}
+		// 	})
+		// 	if (channelExists) {
+		// 		directChannelExists = true
+		// 	}
+		// 	// directChannelExists = true
+		// }
 
 		if (directChannelExists) {
 			webChannel.channels.forEach((c) => {
-				console.log('this one', c.peerId, id, webChannel.knownPeers)
+				// console.log('this one', c.peerId, id, webChannel.knownPeers)
 				if (c.peerId === id) {
-					console.log('i send data')
+					// console.log('i send data')
 					c.send(data)
 					return
 				}
 			})
 		} else {
 			randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
-			console.log('i am here', webChannel.myId)
+			// console.log('i am here', webChannel.myId)
 			while (webChannel.knownPeers[randIndex].peerId === id) {
 				randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
 			}
@@ -129,8 +133,8 @@ class SprayService extends ManagerInterface {
 			let oldest = webChannel.knownPeers[0]
 			let sample
 			let isDeleted
-			console.log()
-			console.log('------ Shuffle ------')
+			// console.log()
+			// console.log('------ Shuffle ------')
 
 			// increment age
 			webChannel.knownPeers.forEach((kp) => { if (typeof kp !== 'undefined') { kp.peerAge = kp.peerAge + 1 } })
@@ -145,7 +149,7 @@ class SprayService extends ManagerInterface {
 			webChannel.isPeerReachable(oldest.peerId)
 				.then(() => {
 					// if oldest is reachable, exchange with it
-					console.log(oldest.peerId, 'is reachable')
+					// console.log(oldest.peerId, 'is reachable')
 
 					// select half of the neighbors excluding one occurrence of oldest
 					sample = webChannel.getSample(webChannel.knownPeers, Math.ceil(webChannel.knownPeers.length / 2) -1)
@@ -182,7 +186,7 @@ class SprayService extends ManagerInterface {
 						isDeleted = false
 						for (let j = 0 ; j < webChannel.knownPeers.length ; j++) {
 							if (typeof webChannel.knownPeers[j] !== 'undefined') {
-								console.log(webChannel.knownPeers[j])
+								// console.log(webChannel.knownPeers[j])
 								if (!isDeleted && webChannel.knownPeers[j].peerId === sample[i].peerId ) {
 									delete webChannel.knownPeers[j]
 									isDeleted = true
@@ -199,7 +203,7 @@ class SprayService extends ManagerInterface {
 				})
 				.catch((e) => {
 					// if oldest is unreachable handle it and repeat process
-					console.log(oldest.peerId, 'is unreachable, reason :', e)
+					// console.log(oldest.peerId, 'is unreachable, reason :', e)
 
 					// handle the departure
 					this.onPeerDown(webChannel, oldest.peerId)
@@ -310,20 +314,18 @@ class SprayService extends ManagerInterface {
 			// if not, create a new one
 			if (!hasChannel) {
 				// create a new channel
-				console.log('I am trying to connect to', webChannel.knownPeers[i].peerId, '... Please wait.', webChannel.myId)
+				// console.log('I am trying to connect to', webChannel.knownPeers[i].peerId, '... Please wait.', webChannel.myId)
 				// this.connectWith(webChannel, webChannel.knownPeers[i].peerId, null, new Set([webChannel.myId]), new Set())
 				cBlder.connectMeTo(webChannel, webChannel.knownPeers[i].peerId)
 					.then((channel) => {
-						console.log('wouhou !')
-						webChannel.initChannel(channel, true, webChannel.knownPeers[i].peerId)
+						webChannel.channels.add(channel)
 					})
-					.catch((e) => console.log('echec :', e))
+					.catch((e) => console.log('failed to connectMeTo, because :', e))
 			}
 		}
 
 		// Delete all channels that belongs to unknown peers
 		for (let c of webChannel.channels) {
-			// console.log(webChannel.myId, c)
 			isKnown = false
 			for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
 				if (webChannel.knownPeers[i].peerId === c.peerId) {

@@ -16,9 +16,6 @@ class ChannelBuilderService extends ServiceInterface {
   }
 
   connectMeTo (wc, id) {
-    console.log('connecting', wc.myId, 'with', id)
-
-
     return new Promise((resolve, reject) => {
       this.addPendingRequest(wc, id, {resolve, reject})
       let data = this.availableConnectors(wc)

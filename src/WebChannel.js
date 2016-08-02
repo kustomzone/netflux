@@ -548,7 +548,7 @@ class WebChannel {
    * @param  {int} interId - Id of the intermediary peer that must forward the message
    */
   forwardMsg(destId, data, interId) {
-    console.log('forwarded data :', data, 'to', destId, 'by', interId)
+    // console.log('forwarded data :', data, 'to', destId, 'by', interId, 'me:', this.myId, 'KP:', this.knownPeers)
     // if the case where wc sends to itself exists, it is a bug
     // if (interId === this.myId) {
     //   this.manager.sendTo(destId, this, data)
@@ -566,19 +566,11 @@ class WebChannel {
         this.manager.sendTo(interId, this, mes)
       } catch (e) {
         msgBld.readUserMessage(this.id, header.senderId, data, (fullData, isBroadcast) => {
-          console.log(fullData)
           let toSend = {data: fullData, code, destId}
-          // console.log(toSend)
           let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
-          console.log(this.knownPeers, interId)
           this.manager.sendTo(interId, this, mes)
         })
       }
-      
-      // let toSend = {data: receivedMsg, code, destId}
-      // // console.log(toSend)
-      // let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
-      // this.manager.sendTo(interId, this, mes)
     }
   }
 
@@ -765,7 +757,6 @@ class WebChannel {
             this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
             this.knownPeers.forEach((kp) => { 
               if (typeof kp !== 'undefined') { 
-                // console.log('--------------------------Finilize kp :', kp, 'myId', this.myId)
                 // console.log('I am', this.myId, 'and I am finilizing connection with', header.senderId)
                 this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS, {id: this.myId})) 
               } 
@@ -830,9 +821,9 @@ class WebChannel {
           this.manager.onShuffleEnd(this, msg)
           break
         case FORWARD_MESSAGE:
-          console.log('------ I forward ------')
-          console.log('myId:', this.myId)
-          console.log(msg)
+          // console.log('------ I forward ------')
+          // console.log('myId:', this.myId)
+          // console.log(msg)
           if (msg.code === SHUFFLE_ANSWER) {
             if (msg.destId === this.myId) {
               this.manager.onShuffleEnd(this, msg.data)
@@ -841,12 +832,10 @@ class WebChannel {
             }
           } else if (msg.code === USER_DATA) {
             if (msg.destId !== this.myId) {
-              console.log(this.myId, msg, header)
               this.sendTo(msg.destId, msg.data)
             } 
           } else if (msg.code === SERVICE_DATA) {
             if (msg.destId !== this.myId) {
-              console.log(this.myId, msg, header)
               this.manager.sendTo(msg.destId, this, msgBld.msg(SERVICE_DATA, msg.data, msg.destId))
             }
           }
@@ -872,7 +861,6 @@ class WebChannel {
               data: msg
             }
           )
-          // console.log(msg, this.myId)
           break
         case IS_PEER_REACHABLE:
           this.manager.sendTo(header.senderId, this, msgBld.msg(PEER_REACHABLE, msg))
@@ -958,7 +946,6 @@ class WebChannel {
     })
     // TODO: handle channels which should be closed & removed
     this.joiningPeers.delete(jp)
-    // console.log('myId :', this.myId, this.knownPeers)
   }
 
   /**

@@ -1796,9 +1796,6 @@
 	  }
 
 	  connectMeTo (wc, id) {
-	    console.log('connecting', wc.myId, 'with', id)
-
-
 	    return new Promise((resolve, reject) => {
 	      this.addPendingRequest(wc, id, {resolve, reject})
 	      let data = this.availableConnectors(wc)
@@ -1899,7 +1896,6 @@
 			   //      jpIds.add(jp.id)
 			   //  }
 		    // })
-		    // console.log('joiningPeers:', jpIds)
 		    return this.connectWith(wc, channel.peerId, channel.peerId, [...peerIds], [...jpIds])
 		}
 
@@ -1907,8 +1903,6 @@
 			// TODO: améliorer le message stocké dans broadcastedMsg et supprimer data useless pour éviter d'avoir des doublons de messages qui différent juste par ces data
 			let isAlreadyBroadcasted = false
 
-			// console.log(webChannel.myId, message)
-			// console.log(this.broadcastedMsg)
 			for (let i = 0 ; i < webChannel.broadcastedMsg.length ; i++) {
 				if (JSON.stringify(webChannel.broadcastedMsg[i].data) === JSON.stringify(message.data)
 						/*&& this.broadcastedMsg[i].header.code === message.header.code*/) {
@@ -1933,54 +1927,61 @@
 		}
 
 		sendTo(id, webChannel, data) {
-			console.log('from', webChannel.myId, 'to', id, data)
+			// console.log('from', webChannel.myId, 'to', id, data)
 			let directChannelExists = false
-			let isKnownPeer = false
-			let channelExists = false
+			// let isKnownPeer = false
+			// let channelExists = false
 			let randIndex
-			for (let kp of webChannel.knownPeers) {
-				if (typeof kp !== 'undefined') {
-					if (kp.peerId === id) {
-						isKnownPeer = true
-					}
-				}
-			}
+			// for (let kp of webChannel.knownPeers) {
+			// 	if (typeof kp !== 'undefined') {
+			// 		if (kp.peerId === id) {
+			// 			isKnownPeer = true
+			// 		}
+			// 	}
+			// }
 
-			if (!isKnownPeer) {
-				webChannel.channels.forEach((c) => {
-					if (c.peerId === id) {
-						channelExists = true
-						return
-					}
-				})
-				if (channelExists) {
+			webChannel.channels.forEach((c) => {
+				if (c.peerId === id) {
 					directChannelExists = true
+					return
 				}
-			} else {
-				webChannel.channels.forEach((c) => {
-					if (c.peerId === id) {
-						channelExists = true
-						return
-					}
-				})
-				if (channelExists) {
-					directChannelExists = true
-				}
-				// directChannelExists = true
-			}
+			})
+
+			// if (!isKnownPeer) {
+			// 	webChannel.channels.forEach((c) => {
+			// 		if (c.peerId === id) {
+			// 			channelExists = true
+			// 			return
+			// 		}
+			// 	})
+			// 	if (channelExists) {
+			// 		directChannelExists = true
+			// 	}
+			// } else {
+			// 	webChannel.channels.forEach((c) => {
+			// 		if (c.peerId === id) {
+			// 			channelExists = true
+			// 			return
+			// 		}
+			// 	})
+			// 	if (channelExists) {
+			// 		directChannelExists = true
+			// 	}
+			// 	// directChannelExists = true
+			// }
 
 			if (directChannelExists) {
 				webChannel.channels.forEach((c) => {
-					console.log('this one', c.peerId, id, webChannel.knownPeers)
+					// console.log('this one', c.peerId, id, webChannel.knownPeers)
 					if (c.peerId === id) {
-						console.log('i send data')
+						// console.log('i send data')
 						c.send(data)
 						return
 					}
 				})
 			} else {
 				randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
-				console.log('i am here', webChannel.myId)
+				// console.log('i am here', webChannel.myId)
 				while (webChannel.knownPeers[randIndex].peerId === id) {
 					randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
 				}
@@ -1997,8 +1998,8 @@
 				let oldest = webChannel.knownPeers[0]
 				let sample
 				let isDeleted
-				console.log()
-				console.log('------ Shuffle ------')
+				// console.log()
+				// console.log('------ Shuffle ------')
 
 				// increment age
 				webChannel.knownPeers.forEach((kp) => { if (typeof kp !== 'undefined') { kp.peerAge = kp.peerAge + 1 } })
@@ -2013,7 +2014,7 @@
 				webChannel.isPeerReachable(oldest.peerId)
 					.then(() => {
 						// if oldest is reachable, exchange with it
-						console.log(oldest.peerId, 'is reachable')
+						// console.log(oldest.peerId, 'is reachable')
 
 						// select half of the neighbors excluding one occurrence of oldest
 						sample = webChannel.getSample(webChannel.knownPeers, Math.ceil(webChannel.knownPeers.length / 2) -1)
@@ -2050,7 +2051,7 @@
 							isDeleted = false
 							for (let j = 0 ; j < webChannel.knownPeers.length ; j++) {
 								if (typeof webChannel.knownPeers[j] !== 'undefined') {
-									console.log(webChannel.knownPeers[j])
+									// console.log(webChannel.knownPeers[j])
 									if (!isDeleted && webChannel.knownPeers[j].peerId === sample[i].peerId ) {
 										delete webChannel.knownPeers[j]
 										isDeleted = true
@@ -2067,7 +2068,7 @@
 					})
 					.catch((e) => {
 						// if oldest is unreachable handle it and repeat process
-						console.log(oldest.peerId, 'is unreachable, reason :', e)
+						// console.log(oldest.peerId, 'is unreachable, reason :', e)
 
 						// handle the departure
 						this.onPeerDown(webChannel, oldest.peerId)
@@ -2178,20 +2179,18 @@
 				// if not, create a new one
 				if (!hasChannel) {
 					// create a new channel
-					console.log('I am trying to connect to', webChannel.knownPeers[i].peerId, '... Please wait.', webChannel.myId)
+					// console.log('I am trying to connect to', webChannel.knownPeers[i].peerId, '... Please wait.', webChannel.myId)
 					// this.connectWith(webChannel, webChannel.knownPeers[i].peerId, null, new Set([webChannel.myId]), new Set())
 					cBlder.connectMeTo(webChannel, webChannel.knownPeers[i].peerId)
 						.then((channel) => {
-							console.log('wouhou !')
-							webChannel.initChannel(channel, true, webChannel.knownPeers[i].peerId)
+							webChannel.channels.add(channel)
 						})
-						.catch((e) => console.log('echec :', e))
+						.catch((e) => console.log('failed to connectMeTo, because :', e))
 				}
 			}
 
 			// Delete all channels that belongs to unknown peers
 			for (let c of webChannel.channels) {
-				// console.log(webChannel.myId, c)
 				isKnown = false
 				for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
 					if (webChannel.knownPeers[i].peerId === c.peerId) {
@@ -2962,6 +2961,7 @@
 	  send (data) {
 	    // if (this.channel.readyState !== 'closed' && new Int8Array(data).length !== 0) {
 	    if (this.channel.readyState !== 'closed') {
+	      // console.log('channel send', data, msgBld.readHeader(data), 'myId', this.webChannel.myId, 'other id', this.peerId)
 	      try {
 	        msgBld$1.completeHeader(data, this.webChannel.myId)
 	        this.channel.send(data)
@@ -3716,7 +3716,7 @@
 	   * @param  {int} interId - Id of the intermediary peer that must forward the message
 	   */
 	  forwardMsg(destId, data, interId) {
-	    console.log('forwarded data :', data, 'to', destId, 'by', interId)
+	    // console.log('forwarded data :', data, 'to', destId, 'by', interId, 'me:', this.myId, 'KP:', this.knownPeers)
 	    // if the case where wc sends to itself exists, it is a bug
 	    // if (interId === this.myId) {
 	    //   this.manager.sendTo(destId, this, data)
@@ -3734,19 +3734,11 @@
 	        this.manager.sendTo(interId, this, mes)
 	      } catch (e) {
 	        msgBld.readUserMessage(this.id, header.senderId, data, (fullData, isBroadcast) => {
-	          console.log(fullData)
 	          let toSend = {data: fullData, code, destId}
-	          // console.log(toSend)
 	          let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
-	          console.log(this.knownPeers, interId)
 	          this.manager.sendTo(interId, this, mes)
 	        })
 	      }
-	      
-	      // let toSend = {data: receivedMsg, code, destId}
-	      // // console.log(toSend)
-	      // let mes = msgBld.msg(FORWARD_MESSAGE, toSend, destId)
-	      // this.manager.sendTo(interId, this, mes)
 	    }
 	  }
 
@@ -3933,7 +3925,6 @@
 	            this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
 	            this.knownPeers.forEach((kp) => { 
 	              if (typeof kp !== 'undefined') { 
-	                // console.log('--------------------------Finilize kp :', kp, 'myId', this.myId)
 	                // console.log('I am', this.myId, 'and I am finilizing connection with', header.senderId)
 	                this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS, {id: this.myId})) 
 	              } 
@@ -3998,9 +3989,9 @@
 	          this.manager.onShuffleEnd(this, msg)
 	          break
 	        case FORWARD_MESSAGE:
-	          console.log('------ I forward ------')
-	          console.log('myId:', this.myId)
-	          console.log(msg)
+	          // console.log('------ I forward ------')
+	          // console.log('myId:', this.myId)
+	          // console.log(msg)
 	          if (msg.code === SHUFFLE_ANSWER) {
 	            if (msg.destId === this.myId) {
 	              this.manager.onShuffleEnd(this, msg.data)
@@ -4009,12 +4000,10 @@
 	            }
 	          } else if (msg.code === USER_DATA) {
 	            if (msg.destId !== this.myId) {
-	              console.log(this.myId, msg, header)
 	              this.sendTo(msg.destId, msg.data)
 	            } 
 	          } else if (msg.code === SERVICE_DATA) {
 	            if (msg.destId !== this.myId) {
-	              console.log(this.myId, msg, header)
 	              this.manager.sendTo(msg.destId, this, msgBld.msg(SERVICE_DATA, msg.data, msg.destId))
 	            }
 	          }
@@ -4040,7 +4029,6 @@
 	              data: msg
 	            }
 	          )
-	          // console.log(msg, this.myId)
 	          break
 	        case IS_PEER_REACHABLE:
 	          this.manager.sendTo(header.senderId, this, msgBld.msg(PEER_REACHABLE, msg))
@@ -4126,7 +4114,6 @@
 	    })
 	    // TODO: handle channels which should be closed & removed
 	    this.joiningPeers.delete(jp)
-	    // console.log('myId :', this.myId, this.knownPeers)
 	  }
 
 	  /**
