@@ -1,10 +1,11 @@
 import ManagerInterface from 'service/manager/ManagerInterface'
 import ChannelBuilderService from 'service/ChannelBuilderService'
 
-// TODO: broadcast: ne traiter que les broadcast non reçus (3 -> 1 -> 2 -> 4 & 5 -> 1, ne pas traiter la deuxieme / troisieme fois au 1)
+// TODO: onArcDown: écrire des tests
+// TODO: broadcast: ne traiter que les broadcast non reçus (3 -> 1 -> 2 -> 4 & 5 => 1, ne pas traiter la deuxieme / troisieme fois au 1)
+// TODO: broadcast: améliorer le message stocké dans broadcastedMsg et supprimer data useless pour éviter d'avoir des doublons de messages qui différent juste par ces data
 // TODO: onPeerDown: fermer les channels avec le peer down
 // TODO: updateChannels: fermer les channels avec les peers qui ne sont plus connus
-// TODO: réaliser onArcDown (se déclenche en théorie lors d'un fail à l'établissement de la connexion)
 // TODO: sendTo: améliorer le code, torp de pertes de perf
 
 /**
@@ -35,7 +36,6 @@ class SprayService extends ManagerInterface {
 	}
 
 	broadcast(webChannel, data, message) {
-		// TODO: améliorer le message stocké dans broadcastedMsg et supprimer data useless pour éviter d'avoir des doublons de messages qui différent juste par ces data
 		let isAlreadyBroadcasted = false
 
 		for (let i = 0 ; i < webChannel.broadcastedMsg.length ; i++) {
@@ -133,8 +133,6 @@ class SprayService extends ManagerInterface {
 			let oldest = webChannel.knownPeers[0]
 			let sample
 			let isDeleted
-			// console.log()
-			// console.log('------ Shuffle ------')
 
 			// increment age
 			webChannel.knownPeers.forEach((kp) => { if (typeof kp !== 'undefined') { kp.peerAge = kp.peerAge + 1 } })
@@ -149,13 +147,8 @@ class SprayService extends ManagerInterface {
 			webChannel.isPeerReachable(oldest.peerId)
 				.then(() => {
 					// if oldest is reachable, exchange with it
-					// console.log(oldest.peerId, 'is reachable')
-
 					// select half of the neighbors excluding one occurrence of oldest
 					sample = webChannel.getSample(webChannel.knownPeers, Math.ceil(webChannel.knownPeers.length / 2) -1)
-
-
-					// console.log('sample :', sample)
 
 					// replace oldest occurrences with itself occurrences
 					sample.forEach((kp) => {
@@ -166,12 +159,6 @@ class SprayService extends ManagerInterface {
 
 					// add one occurrence of itself to this sample and send this sample to oldest
 					sample.push({peerId: webChannel.myId, peerAge: 0})
-
-					// console.log('myId :', webChannel.myId)
-					// console.log('knownPeers: ', webChannel.knownPeers)
-					// console.log('oldest: ', oldest)
-					// console.log('sample :', sample)
-					// console.log('channels:', webChannel.channels)
 
 					webChannel.sendToPeerForShuffle(oldest.peerId, {origin: webChannel.myId, sample})
 
@@ -198,13 +185,9 @@ class SprayService extends ManagerInterface {
 					// some lines to avoid undefined elements
 					webChannel.knownPeers.sort()
 					webChannel.knownPeers.length = webChannel.knownPeers.length - sample.length
-
-					// console.log('new knownPeers: ', webChannel.knownPeers)
 				})
 				.catch((e) => {
 					// if oldest is unreachable handle it and repeat process
-					// console.log(oldest.peerId, 'is unreachable, reason :', e)
-
 					// handle the departure
 					this.onPeerDown(webChannel, oldest.peerId)
 
@@ -224,20 +207,12 @@ class SprayService extends ManagerInterface {
 		let responseSample = webChannel.getSample(webChannel.knownPeers, Math.ceil(webChannel.knownPeers.length / 2))
 		let isDeleted
 
-		// console.log()
-		// console.log('------ onExchange ------')
-		// console.log('myId', webChannel.myId, 'knownPeers: ', webChannel.knownPeers)
-		// console.log('received sample:', sample, 'origin:', originId)
-
 		// replace origin occurrences with itself occurrences and send the response to origin
 		responseSample.forEach((kp) => {
 			if (kp.peerId === originId) {
 				kp.peerId = webChannel.myId
 			}
 		})
-
-		// console.log('myId', webChannel.myId, 'answer :', responseSample, 'dest:', originId)
-		// console.log('knownpeers', webChannel.knownPeers)
 
 		webChannel.sendToPeerForShuffleAnswer(originId, responseSample)
 
@@ -269,11 +244,8 @@ class SprayService extends ManagerInterface {
 
 		// add the sample send by the origin to the partial view
 		webChannel.knownPeers = webChannel.knownPeers.concat(sample)
-		// console.log('new knownpeers', webChannel.knownPeers)
 
 		this.updateChannels(webChannel)
-
-		// console.log('channels', webChannel.channels)
 	}
 
 	/**
@@ -282,13 +254,8 @@ class SprayService extends ManagerInterface {
 	 * @param {array} sample - array containing the {peerId, peerAge} duos sent by the webChannel in response of the shuffle.
 	 */
 	onShuffleEnd(webChannel, sample) {
-		// console.log()
-		// console.log('------ onShuffleEnd ------')
-		// console.log('myId', webChannel.myId, 'knownPeers: ', webChannel.knownPeers)
 		webChannel.knownPeers = webChannel.knownPeers.concat(sample)
-		// console.log('myId', webChannel.myId, 'new knownPeers: ', webChannel.knownPeers)
 		this.updateChannels(webChannel)
-		// console.log('myId', webChannel.myId, 'new channels: ', webChannel.channels)
 	}
 
 	/**
@@ -296,7 +263,6 @@ class SprayService extends ManagerInterface {
 	 * @param {WebChannel} webChannel - the webChannel that have to updates its channels
 	 */
 	updateChannels(webChannel) {
-		// console.log('WC:', webChannel.myId, webChannel.knownPeers)
 		let isKnown
 		let hasChannel
 		let cBlder = new ChannelBuilderService()
@@ -305,7 +271,6 @@ class SprayService extends ManagerInterface {
 		for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
 			hasChannel = false
 			for (let c of webChannel.channels) {
-				// console.log(c.peerId, webChannel.knownPeers[i].peerId)
 				if (c.peerId === webChannel.knownPeers[i].peerId) {
 					hasChannel = true
 					break
@@ -314,13 +279,14 @@ class SprayService extends ManagerInterface {
 			// if not, create a new one
 			if (!hasChannel) {
 				// create a new channel
-				// console.log('I am trying to connect to', webChannel.knownPeers[i].peerId, '... Please wait.', webChannel.myId)
-				// this.connectWith(webChannel, webChannel.knownPeers[i].peerId, null, new Set([webChannel.myId]), new Set())
 				cBlder.connectMeTo(webChannel, webChannel.knownPeers[i].peerId)
 					.then((channel) => {
 						webChannel.channels.add(channel)
 					})
-					.catch((e) => console.log('failed to connectMeTo, because :', e))
+					.catch((e) => {
+						console.log('failed to connectMeTo, because :', e)
+						onArcDown(webChannel, webChannel.knownPeers[i].peerId)
+					})
 			}
 		}
 
@@ -380,6 +346,33 @@ class SprayService extends ManagerInterface {
 
 		webChannel.knownPeers.sort()
 		webChannel.knownPeers.length = webChannel.knownPeers.length - occur
+	}
+
+	/**
+	 * Called when a connection failed to establish.
+	 * Systematically duplicates a connection with an other known peer.
+	 * @param {WebChannel} webChannel - the webChannel that asks to connect to a given peer
+	 * @param {int} peerId - id of the peer that we can't connect to
+	 */
+	onArcDown(webChannel, peerId) {
+		let isDeleted = false
+		let duplicateId
+
+		for (let i = 0 ; i < webChannel.knownPeers.length ; i++) {
+			if (webChannel.knownPeers[i].peerId === peerId && !isDeleted) {
+				delete webChannel.knownPeers[i]
+				isDeleted = true
+			}
+		}
+
+		while (typeof duplicateId === 'undefined') {
+			duplicateId = webChannel.knownPeers[Math.ceil(Math.random() * webChannel.knownPeers.length) - 1]
+		}
+
+		webChannel.knownPeers[webChannel.knownPeers.length] = {peerId: duplicateId, peerAge: 0}
+
+		webChannel.knownPeers.sort()
+		webChannel.knownPeers.length = webChannel.knownPeers.length - 1
 	}
 
 	leave(webChannel) {}

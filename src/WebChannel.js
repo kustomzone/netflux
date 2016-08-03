@@ -321,7 +321,6 @@ class WebChannel {
     */
   addChannel (channel) {
     let jp = this.addJoiningPeer(channel.peerId, this.myId, channel)
-    // (this.topology() === FULLY_CONNECTED) ? this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
     if (this.topology === FULLY_CONNECTED) {
       this.manager.broadcast(this, msgBld.msg(JOIN_NEW_MEMBER, {newId: channel.peerId}))
     } else if (this.topology === SPRAY) {
@@ -345,9 +344,6 @@ class WebChannel {
             this.manager.sendTo(this.knownPeers[i].peerId, this, msgBld.msg(REMOVE_NEW_MEMBER, {id: channel.peerId}))
           }
         }
-        // this.manager.broadcast(this, msgBld.msg(
-        //   REMOVE_NEW_MEMBER, {id: channel.peerId})
-        // )
         this.removeJoiningPeer(jp.id)
       })
   }
@@ -457,7 +453,6 @@ class WebChannel {
         this.channels.forEach((c) => {
           c.close()
         })
-        // this.manager.broadcast(this, msgBld.msg(BROADCAST, {initialHeader: LEAVE}, {header: {code: LEAVE, senderId: this.myId, recepientId: 0}, data: {}}))
       }
       // this.manager.broadcast(this, msgBld.msg(BROADCAST, msgBld.msg(LEAVE)))
       this.topology = this.settings.topology
@@ -495,7 +490,6 @@ class WebChannel {
               })
           })
         }
-        // this.manager.broadcast(this, dataChunk)
       })
     }
   }
@@ -621,7 +615,6 @@ class WebChannel {
             )
           )
         }
-        // this.manager.broadcast(this, msgBld.msg(PING))
         setTimeout(() => { resolve(PING_TIMEOUT) }, PING_TIMEOUT)
       }
     })
@@ -655,7 +648,6 @@ class WebChannel {
     } else {
       // If this function caller is a peer who is joining
       if (this.isJoining()) {
-        // console.log('I am joining', this.myId, 'through', this.getJoiningPeer(this.myId).intermediaryChannel.peerId)
         this.getJoiningPeer(this.myId)
           .intermediaryChannel
           .send(fullMsg)
@@ -728,7 +720,6 @@ class WebChannel {
           // this.onLeaving(msg.id)
           break
         case SERVICE_DATA:
-          // console.log('SERVICE_DATA', msg.data)
           if (this.myId === header.recepientId) {
             provide(msg.serviceName, this.settings).onMessage(this, channel, msg.data)
           } else {
@@ -744,7 +735,6 @@ class WebChannel {
           break
         case JOIN_NEW_MEMBER:
           this.addJoiningPeer(msg.newId, header.senderId)
-          // console.log('adding JP, myId, intermediraryId, KP', this.myId, header.senderId, this.knownPeers)
           break
         case REMOVE_NEW_MEMBER:
           this.removeJoiningPeer(msg.id)
@@ -757,7 +747,6 @@ class WebChannel {
             this.knownPeers[this.knownPeers.length] = {peerId: channel.peerId, peerAge: 0}
             this.knownPeers.forEach((kp) => { 
               if (typeof kp !== 'undefined') { 
-                // console.log('I am', this.myId, 'and I am finilizing connection with', header.senderId)
                 this.manager.sendTo(kp.peerId, this, msgBld.msg(JOIN_SUCCESS, {id: this.myId})) 
               } 
             })
@@ -809,21 +798,12 @@ class WebChannel {
           }
           break
         case SHUFFLE:
-          // console.log()
-          // console.log('------ WC: Shuffle ------')
-          // console.log('myId', this.myId, 'shuffle', msg)
           this.manager.onExchange(this, msg.origin, msg.sample)
           break
         case SHUFFLE_ANSWER:
-          // console.log()
-          // console.log('------ WC: Shuffle answer ------')
-          // console.log('myId', this.myId, 'shuffle_anwser', msg)
           this.manager.onShuffleEnd(this, msg)
           break
         case FORWARD_MESSAGE:
-          // console.log('------ I forward ------')
-          // console.log('myId:', this.myId)
-          // console.log(msg)
           if (msg.code === SHUFFLE_ANSWER) {
             if (msg.destId === this.myId) {
               this.manager.onShuffleEnd(this, msg.data)
@@ -845,10 +825,6 @@ class WebChannel {
             msgBld.completeHeader(dataChunk, msg.initialHeader.senderId)
             this.onChannelMessage(channel, dataChunk)
           })
-
-          // let messageToMySelf = msgBld.msg(msg.initialHeader.code, msg)
-          // msgBld.completeHeader(messageToMySelf, msg.initialHeader.senderId)
-          // this.onChannelMessage(channel, messageToMySelf)
           this.manager.broadcast(
             this, 
             msgBld.msg(BROADCAST, msg), 
@@ -1059,7 +1035,11 @@ class WebChannel {
   }
 
   /**
-   * Generate a random sample of size E[N/2]-1 from the know peers
+   * Generate a random sample of a size given from the known peers
+   * @param {array} partialView - Contains a list of object {peerId, peerAge} which
+   * represents the knownPeers
+   * @param {number} size - The size of the sample we want to get
+   * @returns {array} - The generated sample
    */
   getSample (partialView, size) {
     let indexes = []
