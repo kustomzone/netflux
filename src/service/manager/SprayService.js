@@ -5,7 +5,7 @@ import ChannelBuilderService from 'service/ChannelBuilderService'
 // TODO: broadcast: ne traiter que les broadcast non reçus (3 -> 1 -> 2 -> 4 & 5 => 1, ne pas traiter la deuxieme / troisieme fois au 1)
 // TODO: broadcast: améliorer le message stocké dans broadcastedMsg et supprimer data useless pour éviter d'avoir des doublons de messages qui différent juste par ces data
 // TODO: onPeerDown: fermer les channels avec le peer down
-// TODO: updateChannels: fermer les channels avec les peers qui ne sont plus connus
+// TODO: updateChannels: fermer les channels avec les peers qui ne sont plus connus => A priori fait, à tester
 // TODO: sendTo: améliorer le code, torp de pertes de perf
 
 /**
@@ -62,7 +62,6 @@ class SprayService extends ManagerInterface {
 	}
 
 	sendTo(id, webChannel, data) {
-		// console.log('from', webChannel.myId, 'to', id, data)
 		let directChannelExists = false
 		// let isKnownPeer = false
 		// let channelExists = false
@@ -107,17 +106,14 @@ class SprayService extends ManagerInterface {
 
 		if (directChannelExists) {
 			webChannel.channels.forEach((c) => {
-				// console.log('this one', c.peerId, id, webChannel.knownPeers)
 				if (c.peerId === id) {
-					// console.log('i send data')
 					c.send(data)
 					return
 				}
 			})
 		} else {
 			randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
-			// console.log('i am here', webChannel.myId)
-			while (webChannel.knownPeers[randIndex].peerId === id) {
+			while (typeof webChannel.knownPeers[randIndex] === 'undefined' || webChannel.knownPeers[randIndex].peerId === id) {
 				randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
 			}
 			webChannel.forwardMsg(id, data, webChannel.knownPeers[randIndex].peerId)
@@ -290,6 +286,8 @@ class SprayService extends ManagerInterface {
 			}
 		}
 
+		console.log(webChannel.myId, webChannel.knownPeers)
+
 		// Delete all channels that belongs to unknown peers
 		for (let c of webChannel.channels) {
 			isKnown = false
@@ -300,16 +298,17 @@ class SprayService extends ManagerInterface {
 				}
 			}
 			if (!isKnown && webChannel.channels.size > 1) {
-				// webChannel.canClose(c)
-				// 	.then((answer) => {
-				// 		if (answer) {
-				// 			c.close()
+				webChannel.canClose(c.peerId)
+					.then((answer) => {
+						// console.log('answer:', answer, 'from:', c.peerId, 'to:', webChannel.myId)
+						if (answer) {
+							c.close()
 							webChannel.channels.delete(c)
-				// 		} else {
-				// 			webChannel.channels.delete(c)
-				// 		}
-				// 	})
-				// 	.catch((e) => console.log(e))
+						} else {
+							webChannel.channels.delete(c)
+						}
+					})
+					.catch((e) => console.log(e))
 			}
 		}
 	}

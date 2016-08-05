@@ -23,6 +23,8 @@ const PING_TIMEOUT = 5000
  */
 const PEER_REACHABLE_TIMEOUT = 1000
 
+const CAN_CLOSE_TIMEOUT = 3000
+
 /**
  * One of the internal message type. It's a peer message.
  * @type {number}
@@ -140,6 +142,12 @@ const IS_PEER_REACHABLE = 17
  */
 const PEER_REACHABLE = 18
 
+const CAN_CLOSE = 19
+
+const DO_CLOSE = 20
+
+const DONT_CLOSE = 21
+
 /**
  * Constant used to send a message to the server in order that
  * he can join the webcahnnel
@@ -213,6 +221,8 @@ class WebChannel {
      * @type {array}
      */
     this.isPeerReachableArray = []
+
+    this.canCloseArray = []
 
     /**
      * This event handler is used to resolve *Promise* in {@link WebChannel#join}.
@@ -586,6 +596,18 @@ class WebChannel {
     })
   }
 
+  canClose(peerId) {
+    return new Promise ((resolve, reject) => {
+      try {
+        this.canCloseArray[this.canCloseArray.length] = resolve
+        this.manager.sendTo(peerId, this, msgBld.msg(CAN_CLOSE, {index: this.canCloseArray.length - 1}))
+        setTimeout(() => reject('CAN_CLOSE_TIMEOUT reached'), CAN_CLOSE_TIMEOUT*10)
+      } catch (e) {
+        reject(e)
+      }
+    })
+  }
+
   /**
    * Get the ping of the *WebChannel*. It is an amount in milliseconds which
    * corresponds to the longest ping to each *WebChannel* member.
@@ -818,7 +840,17 @@ class WebChannel {
             if (msg.destId !== this.myId) {
               this.manager.sendTo(msg.destId, this, msgBld.msg(SERVICE_DATA, msg.data, msg.destId))
             }
-          }
+          } else if (msg.code === CAN_CLOSE) {
+            throw new Error('The CAN_CLOSE message is not supposed to be forwarded')
+          } else if (msg.code === DO_CLOSE) {
+            if (msg.destId !== this.myId) {
+              this.manager.sendTo(msg.destId, this, msgBld.msg(DO_CLOSE, msg.data, msg.destId))
+            }
+          } else if (msg.code === DONT_CLOSE) {
+            if (msg.destId !== this.myId) {
+              this.manager.sendTo(msg.destId, this, msgBld.msg(DONT_CLOSE, msg.data, msg.destId))
+            }
+          } 
           break
         case BROADCAST:
           msgBld.handleUserMessage(msg.fullData, null, (dataChunk) => {
@@ -843,6 +875,25 @@ class WebChannel {
           break
         case PEER_REACHABLE:
           this.isPeerReachableArray[msg.index]()
+          break
+        case CAN_CLOSE:
+          let isKnownPeer = false
+          this.channels.forEach((c) => {
+            if (c.peerId === header.senderId) {
+              isKnownPeer = true
+            }
+          })
+          if (isKnownPeer) {
+            this.manager.sendTo(header.senderId, this, msgBld.msg(DONT_CLOSE, msg))
+          } else {
+            this.manager.sendTo(header.senderId, this, msgBld.msg(DO_CLOSE, msg))
+          }
+          break
+        case DO_CLOSE:
+          this.canCloseArray[msg.index](true)
+          break
+        case DONT_CLOSE:
+          this.canCloseArray[msg.index](false)
           break
         default:
           throw new Error(`Unknown message type code: "${header.code}"`)

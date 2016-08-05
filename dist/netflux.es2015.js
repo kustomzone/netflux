@@ -1864,7 +1864,7 @@ class ChannelBuilderService extends ServiceInterface {
 // TODO: broadcast: ne traiter que les broadcast non reçus (3 -> 1 -> 2 -> 4 & 5 => 1, ne pas traiter la deuxieme / troisieme fois au 1)
 // TODO: broadcast: améliorer le message stocké dans broadcastedMsg et supprimer data useless pour éviter d'avoir des doublons de messages qui différent juste par ces data
 // TODO: onPeerDown: fermer les channels avec le peer down
-// TODO: updateChannels: fermer les channels avec les peers qui ne sont plus connus
+// TODO: updateChannels: fermer les channels avec les peers qui ne sont plus connus => A priori fait, à tester
 // TODO: sendTo: améliorer le code, torp de pertes de perf
 
 /**
@@ -1921,7 +1921,6 @@ class SprayService extends ManagerInterface {
 	}
 
 	sendTo(id, webChannel, data) {
-		// console.log('from', webChannel.myId, 'to', id, data)
 		let directChannelExists = false
 		// let isKnownPeer = false
 		// let channelExists = false
@@ -1966,17 +1965,14 @@ class SprayService extends ManagerInterface {
 
 		if (directChannelExists) {
 			webChannel.channels.forEach((c) => {
-				// console.log('this one', c.peerId, id, webChannel.knownPeers)
 				if (c.peerId === id) {
-					// console.log('i send data')
 					c.send(data)
 					return
 				}
 			})
 		} else {
 			randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
-			// console.log('i am here', webChannel.myId)
-			while (webChannel.knownPeers[randIndex].peerId === id) {
+			while (typeof webChannel.knownPeers[randIndex] === 'undefined' || webChannel.knownPeers[randIndex].peerId === id) {
 				randIndex = Math.ceil(Math.random() * webChannel.knownPeers.length) - 1
 			}
 			webChannel.forwardMsg(id, data, webChannel.knownPeers[randIndex].peerId)
@@ -2149,6 +2145,8 @@ class SprayService extends ManagerInterface {
 			}
 		}
 
+		console.log(webChannel.myId, webChannel.knownPeers)
+
 		// Delete all channels that belongs to unknown peers
 		for (let c of webChannel.channels) {
 			isKnown = false
@@ -2159,16 +2157,17 @@ class SprayService extends ManagerInterface {
 				}
 			}
 			if (!isKnown && webChannel.channels.size > 1) {
-				// webChannel.canClose(c)
-				// 	.then((answer) => {
-				// 		if (answer) {
-				// 			c.close()
+				webChannel.canClose(c.peerId)
+					.then((answer) => {
+						// console.log('answer:', answer, 'from:', c.peerId, 'to:', webChannel.myId)
+						if (answer) {
+							c.close()
 							webChannel.channels.delete(c)
-				// 		} else {
-				// 			webChannel.channels.delete(c)
-				// 		}
-				// 	})
-				// 	.catch((e) => console.log(e))
+						} else {
+							webChannel.channels.delete(c)
+						}
+					})
+					.catch((e) => console.log(e))
 			}
 		}
 	}
@@ -3178,6 +3177,8 @@ const PING_TIMEOUT = 5000
  */
 const PEER_REACHABLE_TIMEOUT = 1000
 
+const CAN_CLOSE_TIMEOUT = 3000
+
 /**
  * One of the internal message type. It's a peer message.
  * @type {number}
@@ -3295,6 +3296,12 @@ const IS_PEER_REACHABLE = 17
  */
 const PEER_REACHABLE = 18
 
+const CAN_CLOSE = 19
+
+const DO_CLOSE = 20
+
+const DONT_CLOSE = 21
+
 /**
  * Constant used to send a message to the server in order that
  * he can join the webcahnnel
@@ -3368,6 +3375,8 @@ class WebChannel {
      * @type {array}
      */
     this.isPeerReachableArray = []
+
+    this.canCloseArray = []
 
     /**
      * This event handler is used to resolve *Promise* in {@link WebChannel#join}.
@@ -3741,6 +3750,18 @@ class WebChannel {
     })
   }
 
+  canClose(peerId) {
+    return new Promise ((resolve, reject) => {
+      try {
+        this.canCloseArray[this.canCloseArray.length] = resolve
+        this.manager.sendTo(peerId, this, msgBld.msg(CAN_CLOSE, {index: this.canCloseArray.length - 1}))
+        setTimeout(() => reject('CAN_CLOSE_TIMEOUT reached'), CAN_CLOSE_TIMEOUT*10)
+      } catch (e) {
+        reject(e)
+      }
+    })
+  }
+
   /**
    * Get the ping of the *WebChannel*. It is an amount in milliseconds which
    * corresponds to the longest ping to each *WebChannel* member.
@@ -3973,7 +3994,17 @@ class WebChannel {
             if (msg.destId !== this.myId) {
               this.manager.sendTo(msg.destId, this, msgBld.msg(SERVICE_DATA, msg.data, msg.destId))
             }
-          }
+          } else if (msg.code === CAN_CLOSE) {
+            throw new Error('The CAN_CLOSE message is not supposed to be forwarded')
+          } else if (msg.code === DO_CLOSE) {
+            if (msg.destId !== this.myId) {
+              this.manager.sendTo(msg.destId, this, msgBld.msg(DO_CLOSE, msg.data, msg.destId))
+            }
+          } else if (msg.code === DONT_CLOSE) {
+            if (msg.destId !== this.myId) {
+              this.manager.sendTo(msg.destId, this, msgBld.msg(DONT_CLOSE, msg.data, msg.destId))
+            }
+          } 
           break
         case BROADCAST:
           msgBld.handleUserMessage(msg.fullData, null, (dataChunk) => {
@@ -3998,6 +4029,25 @@ class WebChannel {
           break
         case PEER_REACHABLE:
           this.isPeerReachableArray[msg.index]()
+          break
+        case CAN_CLOSE:
+          let isKnownPeer = false
+          this.channels.forEach((c) => {
+            if (c.peerId === header.senderId) {
+              isKnownPeer = true
+            }
+          })
+          if (isKnownPeer) {
+            this.manager.sendTo(header.senderId, this, msgBld.msg(DONT_CLOSE, msg))
+          } else {
+            this.manager.sendTo(header.senderId, this, msgBld.msg(DO_CLOSE, msg))
+          }
+          break
+        case DO_CLOSE:
+          this.canCloseArray[msg.index](true)
+          break
+        case DONT_CLOSE:
+          this.canCloseArray[msg.index](false)
           break
         default:
           throw new Error(`Unknown message type code: "${header.code}"`)
