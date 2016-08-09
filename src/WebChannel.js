@@ -23,6 +23,10 @@ const PING_TIMEOUT = 5000
  */
 const PEER_REACHABLE_TIMEOUT = 1000
 
+/**
+ * Timeout for the peer to answer when trying to know if the channel can be closed.
+ * @type {number}
+ */
 const CAN_CLOSE_TIMEOUT = 3000
 
 /**
@@ -142,10 +146,25 @@ const IS_PEER_REACHABLE = 17
  */
 const PEER_REACHABLE = 18
 
+/**
+ * One of the internal message type. This message is sent when a peer wants to know if
+ * a channel with a peer can be closed or not in the Spray topology
+ * @type {number}
+ */
 const CAN_CLOSE = 19
 
+/**
+ * One of the internal message type. This message is sent when answering a CAN_CLOSE
+ * message to say that yes the channel can be closed
+ * @type {number}
+ */
 const DO_CLOSE = 20
 
+/**
+ * One of the internal message type. This message is sent when answering a CAN_CLOSE
+ * message to say that no the channel can't be closed
+ * @type {number}
+ */
 const DONT_CLOSE = 21
 
 /**
@@ -596,6 +615,13 @@ class WebChannel {
     })
   }
 
+  /**
+   * Check if the peer with peerId has a channel with me or not. If it has, the promise is
+   * resolved with the answer true, if it hasn't the promise is resolved with the answer false.
+   * If an error occurs or that it takes too long, the promise rejects.
+   * @param {int} peerId - id of the peer to check
+   * @returns {Promise}
+   */
   canClose(peerId) {
     return new Promise ((resolve, reject) => {
       try {
@@ -686,29 +712,7 @@ class WebChannel {
           }
         // If the recepient is a member of webChannel
         } else {
-          // if (this.topology === SPRAY) {
-          //   let isKnownPeer = false
-          //   for (let i = 0 ; i < this.knownPeers.length ; i++) {
-          //     if (this.knownPeers[i].peerId === recepient) {
-          //       isKnownPeer = true
-          //       break
-          //     }
-          //   }
-          //   if (isKnownPeer) {
-          //     console.log('isKnownPeer')
-              // console.log(SERVICE_DATA, {serviceName, data: msg}, recepient, msgBld.readHeader(fullMsg))
-          //     this.manager.sendTo(recepient, this, fullMsg)
-          //   } else {
-          //     console.log('isNotKnownPeer')
-          //     this.channels.forEach((c) => {
-          //       if (c.peerId === recepient) {
-          //         c.send(fullMsg)
-          //       }
-          //     })
-          //   }
-          // } else if (this.topology === FULLY_CONNECTED) {
-            this.manager.sendTo(recepient, this, fullMsg)
-          // }
+          this.manager.sendTo(recepient, this, fullMsg)
         }
       }
     }

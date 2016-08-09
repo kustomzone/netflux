@@ -8,6 +8,11 @@ import ChannelBuilderService from 'service/ChannelBuilderService'
 // TODO: updateChannels: fermer les channels avec les peers qui ne sont plus connus => A priori fait, à tester
 // TODO: sendTo: améliorer le code, torp de pertes de perf
 
+// Idées pour faire fonctionner la topologie:
+//	- Known peers in + Known peers out. Si known peers in = vide alors on maintient la connexion
+//	- Lors de l'échange de pairs, le pair recevant le shuffle ne prend pas |N/2| pairs et envoie mais prend |N/2|-1 et s'ajoute. (pb, ajout d'une connexion à chaque shuffle ?)
+// 	- Modifier le pair d'entrée à chaque fois qu'on fait une nouvelle connexion
+
 /**
  * Spray web channel manager. Implements spray topology
  * network, when each peer is connected to ln(N) other peers.
@@ -285,8 +290,6 @@ class SprayService extends ManagerInterface {
 					})
 			}
 		}
-
-		console.log(webChannel.myId, webChannel.knownPeers)
 
 		// Delete all channels that belongs to unknown peers
 		for (let c of webChannel.channels) {

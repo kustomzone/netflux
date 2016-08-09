@@ -1867,6 +1867,11 @@ class ChannelBuilderService extends ServiceInterface {
 // TODO: updateChannels: fermer les channels avec les peers qui ne sont plus connus => A priori fait, à tester
 // TODO: sendTo: améliorer le code, torp de pertes de perf
 
+// Idées pour faire fonctionner la topologie:
+//	- Known peers in + Known peers out. Si known peers in = vide alors on maintient la connexion
+//	- Lors de l'échange de pairs, le pair recevant le shuffle ne prend pas |N/2| pairs et envoie mais prend |N/2|-1 et s'ajoute. (pb, ajout d'une connexion à chaque shuffle ?)
+// 	- Modifier le pair d'entrée à chaque fois qu'on fait une nouvelle connexion
+
 /**
  * Spray web channel manager. Implements spray topology
  * network, when each peer is connected to ln(N) other peers.
@@ -2144,8 +2149,6 @@ class SprayService extends ManagerInterface {
 					})
 			}
 		}
-
-		console.log(webChannel.myId, webChannel.knownPeers)
 
 		// Delete all channels that belongs to unknown peers
 		for (let c of webChannel.channels) {
@@ -3177,6 +3180,10 @@ const PING_TIMEOUT = 5000
  */
 const PEER_REACHABLE_TIMEOUT = 1000
 
+/**
+ * Timeout for the peer to answer when trying to know if the channel can be closed.
+ * @type {number}
+ */
 const CAN_CLOSE_TIMEOUT = 3000
 
 /**
@@ -3296,10 +3303,25 @@ const IS_PEER_REACHABLE = 17
  */
 const PEER_REACHABLE = 18
 
+/**
+ * One of the internal message type. This message is sent when a peer wants to know if
+ * a channel with a peer can be closed or not in the Spray topology
+ * @type {number}
+ */
 const CAN_CLOSE = 19
 
+/**
+ * One of the internal message type. This message is sent when answering a CAN_CLOSE
+ * message to say that yes the channel can be closed
+ * @type {number}
+ */
 const DO_CLOSE = 20
 
+/**
+ * One of the internal message type. This message is sent when answering a CAN_CLOSE
+ * message to say that no the channel can't be closed
+ * @type {number}
+ */
 const DONT_CLOSE = 21
 
 /**
@@ -3750,6 +3772,13 @@ class WebChannel {
     })
   }
 
+  /**
+   * Check if the peer with peerId has a channel with me or not. If it has, the promise is
+   * resolved with the answer true, if it hasn't the promise is resolved with the answer false.
+   * If an error occurs or that it takes too long, the promise rejects.
+   * @param {int} peerId - id of the peer to check
+   * @returns {Promise}
+   */
   canClose(peerId) {
     return new Promise ((resolve, reject) => {
       try {
@@ -3840,29 +3869,7 @@ class WebChannel {
           }
         // If the recepient is a member of webChannel
         } else {
-          // if (this.topology === SPRAY) {
-          //   let isKnownPeer = false
-          //   for (let i = 0 ; i < this.knownPeers.length ; i++) {
-          //     if (this.knownPeers[i].peerId === recepient) {
-          //       isKnownPeer = true
-          //       break
-          //     }
-          //   }
-          //   if (isKnownPeer) {
-          //     console.log('isKnownPeer')
-              // console.log(SERVICE_DATA, {serviceName, data: msg}, recepient, msgBld.readHeader(fullMsg))
-          //     this.manager.sendTo(recepient, this, fullMsg)
-          //   } else {
-          //     console.log('isNotKnownPeer')
-          //     this.channels.forEach((c) => {
-          //       if (c.peerId === recepient) {
-          //         c.send(fullMsg)
-          //       }
-          //     })
-          //   }
-          // } else if (this.topology === FULLY_CONNECTED) {
-            this.manager.sendTo(recepient, this, fullMsg)
-          // }
+          this.manager.sendTo(recepient, this, fullMsg)
         }
       }
     }
